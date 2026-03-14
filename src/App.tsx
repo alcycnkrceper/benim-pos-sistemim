@@ -93,7 +93,7 @@ export default function App() {
     if (amount && !isNaN(amount) && parseFloat(amount) > 0) {
       await updateDoc(doc(db, 'customers', customer.id), { balance: customer.balance - parseFloat(amount) });
       // Tahsilatı da gelir olarak kaydet
-      await addDoc(collection(db, 'sales'), { items: [{name: 'Cari Tahsilat', qty: 1, grossPrice: parseFloat(amount)}], total: parseFloat(amount), method: 'Tahsilat', customerName: customer.name, date: new Date().toISOString() });
+      await addDoc(collection(db, 'sales'), { items: [{name: 'Cari Tahsilat', qty: 1, grossPrice: parseFloat(amount)}], total: parseFloat(amount), method: 'Tahsilat', customerName: customer.name, date: new Date().toLocaleString('tr-TR') });
       alert("Tahsilat başarıyla düştü ve gelirlere eklendi!");
     }
   };
@@ -143,7 +143,9 @@ export default function App() {
 
   const filteredProducts = products.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()) || (p.barcode && p.barcode.includes(searchQuery)));
 
+  // DİKKAT: İŞTE O UNUTTUĞUM GİZLİ ETİKET BURADA ( <></> )
   return (
+    <>
     <div className="flex h-screen bg-zinc-950 text-zinc-100 font-sans overflow-hidden print:hidden">
       
       {/* SOL MENÜ */}
@@ -273,7 +275,7 @@ export default function App() {
           </div>
         )}
 
-        {/* DİĞER EKRANLAR (Ürünler ve Cari Hesaplar Eski Kodla Aynıdır, yer kaplamaması için sıkıştırıldı) */}
+        {/* DİĞER EKRANLAR */}
         {activeTab === 'customers' && (
           <div className="p-8 w-full overflow-y-auto">
             <div className="flex justify-between items-center mb-8"><h2 className="text-2xl font-bold flex items-center gap-2"><Users className="text-emerald-500"/> Cari Hesaplar</h2><button onClick={() => setShowCustomerForm(!showCustomerForm)} className="bg-emerald-500 text-zinc-950 font-bold py-2 px-4 rounded-lg flex items-center gap-2">{showCustomerForm ? 'Vazgeç' : <><UserPlus size={20} /> Yeni Cari Ekle</>}</button></div>
