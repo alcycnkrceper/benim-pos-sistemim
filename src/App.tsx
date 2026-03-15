@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc } from 'firebase/firestore';
 import { ShoppingCart, Package, Users, Plus, Trash2, Search, PlusCircle, MinusCircle, Wallet, UserPlus, CheckCircle, X, BarChart3, Printer, TrendingDown, TrendingUp, Zap, Phone, Tag, Percent, Download, Upload, FileSpreadsheet } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 // FIREBASE BAĞLANTISI
 const firebaseConfig = {
@@ -145,6 +146,84 @@ export default function App() {
     setExpName(''); setExpAmount('');
   };
 
+  // --- EXCEL (.XLSX) PARAŞÜT SATIŞ FATURASI AKTARIMI ---
+  const exportParasutInvoices = () => {
+    // Paraşüt'ün zorunlu kıldığı başlık metni
+    const helpText = "Satış Faturaları\n\n- Yıldız ile belirlenen alanları doldurmanız yeterlidir.\n- Faturalar ile beraber Paraşüt’te kayıtlı olmayan Müşteriler ve Hizmet/Ürünler de oluşturulur.\n- Paraşütte kayıtlı olan müşteriler içeri alınan faturalar ile ilişkilendirilir.\n- Fatura Türü, “Fatura”, \"Taslak\" (ya da “Proforma”) veya \"Konaklama\" olabilir. Boş bırakmanız halinde “Fatura” olarak kaydedilir.\n- Fatura döviz cinsi TRL, USD, EUR veya GBP olabilir. Döviz cinsi belirtilmediği takdirde TRL olarak kabul edilir.\n- Proforma faturalarda fatura döviz kuru boş bırakılmalıdır. Eğer bir kur belirtilmişse göz ardı edilir. Faturalarda ise döviz kuru zorunludur.\n- Vade tarihi olmayan veya ileri bir tarihe denk gelen faturalar açık fatura olarak içeri alınır. Geçmiş tarihli tahsilatlar gerçekleşti olarak varsayılır ve kasa hesabınıza eklenir.\n- Yabancı döviz cinsinden kesilen faturalar için yapılan tahsilatların Türk Lirası karşılıklarınin girilmesi zorunludur. TL faturalarda ve diğer açık faturalarda bu alan boş bırakılmalıdır.\n- Bir faturaya birden fazla hizmet/ürün eklemek için faturayı takip eden satırlarda sadece hizmet/ürün detaylarını doldurun.\n- KDV Oranı 10 Temmuz 2023 itibariyle 0, 1, 10 veya 20 olmalıdır.\n- Fatura Sıra Numarasının başına sıfır eklemenize gerek yoktur.\n- Deponun belirtilmemesi durumunda ürünler varsayılan deponuzan çıkmış olarak kabul edilir.\n- Konaklama Vergisi Oranı belirtilmemiş ise Konaklama Vergisi yok, oran 0 ise Konaklama Vergisi istisna kabul edilir.\n- Tablonun sütun yapısını bozmayın.\n- Bu yardım metnini silmeyin.\n- Destek için destek@parasut.com veya 0212 292 04 94";
+
+    const data = [
+      [helpText],
+      [], // Boş Satır
+      ["MÜŞTERİ ÜNVANI *","FATURA İSMİ","FATURA TARİHİ","DÖVİZ CİNSİ","DÖVİZ KURU","VADE TARİHİ","TAHSİLAT TL KARŞILIĞI","FATURA TÜRÜ","FATURA SERİ","FATURA SIRA NO","KATEGORİ","HİZMET/ÜRÜN *","HİZMET/ÜRÜN AÇIKLAMASI","ÇIKIŞ DEPOSU *","MİKTAR *","BİRİM FİYATI *","İNDİRİM TUTARI","KDV ORANI *","ÖİV ORANI","KONAKLAMA VERGİSİ ORANI"]
+    ];
+
+    let invoiceCounter = 1;
+
+    sales.forEach(sale => {
+      // Tahsilat kayıtları fatura kalemi değildir, atla
+      if (sale.method === 'Tahsilat') return;
+
+      // Tarih Formatlama "YYYY-MM-DD"
+      let fDate = "";
+      try {
+        const parts = sale.date.split(' ')[0].split('.');
+        fDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+      } catch(e) { fDate = sale.date.split(' ')[0]; }
+
+      const customerName = (sale.customerName && sale.customerName !== 'Perakende Müşteri') ? sale.customerName : 'Perakende Müşteri';
+      
+      sale.items.forEach((item, index) => {
+        if (index === 0) {
+          // İlk Ürün Satırı (Tüm Fatura detayları var)
+          data.push([
+            customerName,
+            `Satış Fişi #${sale.id.slice(-6).toUpperCase()}`,
+            fDate,
+            "TRL", // DÖVİZ CİNSİ
+            "", // DÖVİZ KURU
+            fDate, // VADE TARİHİ
+            sale.method !== 'Veresiye' ? (sale.total || 0).toFixed(2) : "", // TAHSİLAT TL KARŞILIĞI
+            "Fatura",
+            "A",
+            invoiceCounter,
+            "Genel Satış",
+            (item.name || ''),
+            "", // HİZMET/ÜRÜN AÇIKLAMASI
+            "Merkez", // ÇIKIŞ DEPOSU
+            item.qty,
+            item.grossPrice,
+            sale.discountAmount ? sale.discountAmount.toFixed(2) : "0", // İNDİRİM TUTARI
+            item.taxRate || 20,
+            "0", // ÖİV ORANI
+            "0"  // KONAKLAMA VERGİSİ
+          ]);
+        } else {
+          // Şablona Göre Alt Kalemler (İlk 11 Sütun Boş Bırakılmalı)
+          data.push([
+            "", "", "", "", "", "", "", "", "", "", "",
+            (item.name || ''),
+            "",
+            "Merkez",
+            item.qty,
+            item.grossPrice,
+            "0",
+            item.taxRate || 20,
+            "0",
+            "0"
+          ]);
+        }
+      });
+      invoiceCounter++;
+    });
+
+    // Veriyi EXCEL dosyasına çevir
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Satış Faturaları");
+    XLSX.writeFile(wb, "parasut_satis_faturalari.xlsx");
+  };
+
+  // Basit CSV İndirme
   const downloadCSV = (dataList, headers, filename) => {
     const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + [headers.join(","), ...dataList.map(e => e.join(","))].join("\n");
     const link = document.createElement("a");
@@ -269,6 +348,7 @@ export default function App() {
           </div>
         )}
 
+        {/* ÜRÜNLER SEKMESİ (İÇERİ / DIŞARI AKTAR) */}
         {activeTab === 'products' && (
           <div className="p-8 w-full overflow-y-auto">
             <div className="flex justify-between items-center mb-8">
@@ -310,6 +390,7 @@ export default function App() {
           </div>
         )}
 
+        {/* MÜŞTERİLER SEKMESİ */}
         {activeTab === 'customers' && (
           <div className="p-8 w-full overflow-y-auto">
             <div className="flex justify-between items-center mb-8">
@@ -349,15 +430,16 @@ export default function App() {
           </div>
         )}
 
+        {/* RAPORLAR & STRATEJİ SEKMESİ (EXCEL PARAŞÜT BUTONU BURADA) */}
         {activeTab === 'reports' && (
           <div className="p-8 w-full overflow-y-auto">
             <div className="flex justify-between items-center mb-10">
               <h2 className="text-3xl font-black">Strateji ve Rapor Paneli</h2>
-              <button onClick={() => {
-                const data = customers.map(c => [(c.name || '').replace(/,/g, ''), c.taxNum || '', c.phone || '', '', '', '', '', '', c.balance || 0]);
-                downloadCSV(data, ["Unvan", "Vergi No", "Telefon", "E-posta", "Il", "Ilce", "Adres", "Musteri Tipi", "Acilis Bakiyesi"], "parasut_musteriler_sablonu.csv");
-                alert("Paraşüt uyumlu Müşteri şablonu indirildi! Bunu Paraşüt'e yükleyebilirsiniz.");
-              }} className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-3 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-600/20"><FileSpreadsheet size={20}/> Paraşüt'e Aktar (Müşteriler)</button>
+              
+              {/* Paraşüt Fatura İndirme (EXCEL) Butonu */}
+              <button onClick={exportParasutInvoices} className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-3 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-600/20">
+                <FileSpreadsheet size={20}/> Paraşüt'e Aktar (Tüm Faturaları İndir)
+              </button>
             </div>
 
             <div className="grid grid-cols-4 gap-6 mb-12">
