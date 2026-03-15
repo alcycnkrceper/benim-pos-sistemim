@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc } from 'firebase/firestore';
-import { ShoppingCart, Package, Users, Plus, Trash2, Search, PlusCircle, MinusCircle, Wallet, UserPlus, CheckCircle, X, BarChart3, Printer, TrendingDown, TrendingUp, Zap, Phone, Tag, Percent } from 'lucide-react';
+import { ShoppingCart, Package, Users, Plus, Trash2, Search, PlusCircle, MinusCircle, Wallet, UserPlus, CheckCircle, X, BarChart3, Printer, TrendingDown, TrendingUp, Zap, Phone, Tag, Percent, Download, Upload, FileSpreadsheet } from 'lucide-react';
 
 // FIREBASE BAĞLANTISI
 const firebaseConfig = {
@@ -36,19 +36,23 @@ export default function App() {
   const [lastSale, setLastSale] = useState(null);
   const [flash, setFlash] = useState(false);
 
-  // Ürün Formu State'leri
+  // Ürün Formu State'leri (Alış Fiyatı Eklendi)
   const [pName, setPName] = useState('');
   const [pBarcode, setPBarcode] = useState('');
   const [pUnit, setPUnit] = useState('Adet');
+  const [pCost, setPCost] = useState(''); // Alış Fiyatı (Maliyet)
   const [pNet, setPNet] = useState('');
   const [pTax, setPTax] = useState('20');
 
-  // Müşteri ve Gider Formu (Vergi No Eklendi)
+  // Müşteri ve Gider Formu
   const [cName, setCName] = useState('');
   const [cPhone, setCPhone] = useState('');
   const [cTaxNum, setCTaxNum] = useState('');
   const [expName, setExpName] = useState('');
   const [expAmount, setExpAmount] = useState('');
+
+  const fileInputRefProd = useRef(null);
+  const fileInputRefCust = useRef(null);
 
   // --- VERİ ÇEKME ---
   useEffect(() => {
@@ -59,7 +63,7 @@ export default function App() {
     return () => { unsubP(); unsubC(); unsubS(); unsubE(); };
   }, []);
 
-  // --- BARKOD TABANCASI DİNLEYİCİ ---
+  // --- BARKOD DİNLEYİCİ ---
   useEffect(() => {
     let buffer = '';
     const handleKey = (e) => {
@@ -82,8 +86,12 @@ export default function App() {
   
   const handleAddProduct = async (e) => {
     e.preventDefault();
-    await addDoc(collection(db, 'products'), { name: pName, barcode: pBarcode, unit: pUnit, netPrice: parseFloat(pNet), taxRate: parseInt(pTax), grossPrice: parseFloat(calcGross(pNet, pTax)) });
-    setPName(''); setPBarcode(''); setPNet(''); setShowAddForm(false);
+    await addDoc(collection(db, 'products'), { 
+      name: pName, barcode: pBarcode, unit: pUnit, 
+      costPrice: parseFloat(pCost) || 0, // Maliyet Eklendi
+      netPrice: parseFloat(pNet), taxRate: parseInt(pTax), grossPrice: parseFloat(calcGross(pNet, pTax)) 
+    });
+    setPName(''); setPBarcode(''); setPCost(''); setPNet(''); setShowAddForm(false);
   };
 
   // --- MÜŞTERİ İŞLEMLERİ ---
@@ -101,7 +109,7 @@ export default function App() {
     }
   };
 
-  // --- KASA, SEPET VE İSKONTO ---
+  // --- KASA & SEPET ---
   const addToCart = (p) => {
     setCart(prev => {
       const ex = prev.find(i => i.id === p.id);
@@ -111,57 +119,88 @@ export default function App() {
     setSearchQuery('');
   };
 
-  // İskonto ve Toplam Hesaplamaları
+  // Hesaplamalar
   const rawTotal = cart.reduce((t, i) => t + (i.grossPrice * i.qty), 0);
+  const totalCost = cart.reduce((t, i) => t + ((i.costPrice || 0) * i.qty), 0); // Satılan malın maliyeti
   const discountVal = parseFloat(discountPct) || 0;
   const discountAmount = rawTotal * (discountVal / 100);
   const finalTotal = rawTotal - discountAmount;
 
   const finishSale = async (method) => {
     if (cart.length === 0) return;
-    if (method === 'Veresiye' && !cartCustomer) return alert("Veresiye satış için üst taraftan bir Cari seçmelisiniz!");
+    if (method === 'Veresiye' && !cartCustomer) return alert("Veresiye satış için Müşteri seçmelisiniz!");
 
     const activeCustomer = customers.find(c => c.id === cartCustomer);
-    
     const saleData = { 
-      items: cart, 
-      subTotal: rawTotal,
-      discountPct: discountVal,
-      discountAmount: discountAmount,
-      total: finalTotal, 
-      method, 
-      customerName: activeCustomer ? activeCustomer.name : 'Perakende Müşteri', 
-      customerTax: activeCustomer ? activeCustomer.taxNum : '-',
-      date: new Date().toLocaleString('tr-TR') 
+      items: cart, subTotal: rawTotal, discountPct: discountVal, discountAmount,
+      totalCost: totalCost, // Maliyeti veri tabanına yazıyoruz (Kar analizi için)
+      total: finalTotal, method, customerName: activeCustomer ? activeCustomer.name : 'Perakende Müşteri', 
+      customerTax: activeCustomer ? activeCustomer.taxNum : '-', date: new Date().toLocaleString('tr-TR') 
     };
     
     const ref = await addDoc(collection(db, 'sales'), saleData);
-    
-    if (method === 'Veresiye' && activeCustomer) {
-      await updateDoc(doc(db, 'customers', activeCustomer.id), { balance: activeCustomer.balance + finalTotal });
-    }
+    if (method === 'Veresiye' && activeCustomer) await updateDoc(doc(db, 'customers', activeCustomer.id), { balance: activeCustomer.balance + finalTotal });
     
     setLastSale({ id: ref.id, ...saleData });
-    setCart([]);
-    setCartCustomer('');
-    setDiscountPct('');
+    setCart([]); setCartCustomer(''); setDiscountPct('');
   };
 
-  // --- GİDER ---
   const handleAddExpense = async (e) => {
     e.preventDefault();
     await addDoc(collection(db, 'expenses'), { name: expName, amount: parseFloat(expAmount), date: new Date().toISOString() });
     setExpName(''); setExpAmount('');
   };
 
-  const netProfit = sales.reduce((a, b) => a + b.total, 0) - expenses.reduce((a, b) => a + b.amount, 0);
+  // --- İÇERİ / DIŞARI AKTAR (CSV) & PARAŞÜT ---
+  const downloadCSV = (dataList, headers, filename) => {
+    const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + [headers.join(","), ...dataList.map(e => e.join(","))].join("\n");
+    const link = document.createElement("a");
+    link.href = encodeURI(csvContent);
+    link.download = filename;
+    link.click();
+  };
+
+  const exportProducts = () => {
+    const data = products.map(p => [p.name.replace(/,/g, ''), p.barcode, p.unit, p.costPrice || 0, p.grossPrice]);
+    downloadCSV(data, ["Urun Adi", "Barkod", "Birim", "Alis Fiyati", "Satis Fiyati"], "urunler_listesi.csv");
+  };
+
+  const exportCustomers = () => {
+    const data = customers.map(c => [c.name.replace(/,/g, ''), c.taxNum, c.phone, c.balance]);
+    downloadCSV(data, ["Musteri Adi", "Vergi No", "Telefon", "Bakiye"], "musteriler_listesi.csv");
+  };
+
+  // İçeri Aktar İşlemleri
+  const importProducts = (e) => {
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      const rows = evt.target.result.split('\n').slice(1); // Başlığı atla
+      for(let row of rows) {
+        const cols = row.split(',');
+        if(cols.length >= 4 && cols[0].trim() !== '') {
+          await addDoc(collection(db, 'products'), { name: cols[0], barcode: cols[1], unit: cols[2], costPrice: parseFloat(cols[3])||0, grossPrice: parseFloat(cols[4])||0 });
+        }
+      }
+      alert("Ürünler başarıyla içeri aktarıldı!");
+    };
+    reader.readAsText(file);
+  };
+
+  // --- GELİŞMİŞ KAR / ZARAR ANALİZİ ---
+  const totalIncome = sales.reduce((a, b) => a + b.total, 0);
+  const totalExpense = expenses.reduce((a, b) => a + b.amount, 0);
+  // Sadece mal satışlarından kaynaklanan maliyetleri topla (Tahsilatlar hariç)
+  const totalCogs = sales.filter(s => s.method !== 'Tahsilat').reduce((a, b) => a + (b.totalCost || 0), 0);
+  const netCommercialProfit = totalIncome - totalCogs - totalExpense; // Satış - Maliyet - Giderler
 
   return (
     <>
     <div className={`flex h-screen text-zinc-100 transition-colors duration-300 print:hidden ${flash ? 'bg-emerald-900' : 'bg-zinc-950'}`}>
       
       {/* SIDEBAR */}
-      <aside className="w-64 bg-zinc-900 border-r border-zinc-800 flex flex-col">
+      <aside className="w-64 bg-zinc-900 border-r border-zinc-800 flex flex-col shrink-0">
         <div className="p-6 border-b border-zinc-800 flex items-center gap-3">
           <div className="w-10 h-10 bg-emerald-500 rounded-lg flex items-center justify-center font-bold text-zinc-950 text-xl">M</div>
           <div><h1 className="font-bold">Merkez Şube</h1><p className="text-[10px] text-zinc-500 flex items-center gap-1 font-mono"><Zap size={10} className="text-yellow-400"/> HIZLI MOD AKTİF</p></div>
@@ -171,7 +210,7 @@ export default function App() {
             { id: 'pos', icon: <ShoppingCart size={20}/>, label: 'Hızlı Satış' },
             { id: 'products', icon: <Package size={20}/>, label: 'Ürün Deposu' },
             { id: 'customers', icon: <Users size={20}/>, label: 'Cari Hesaplar' },
-            { id: 'reports', icon: <BarChart3 size={20}/>, label: 'Mali Raporlar' }
+            { id: 'reports', icon: <BarChart3 size={20}/>, label: 'Strateji & Rapor' }
           ].map(t => (
             <button key={t.id} onClick={() => setActiveTab(t.id)} className={`w-full flex items-center gap-3 p-3 rounded-xl transition-all ${activeTab === t.id ? 'bg-emerald-500 text-zinc-950 font-bold shadow-lg shadow-emerald-500/20' : 'text-zinc-400 hover:bg-zinc-800'}`}>
               {t.icon} {t.label}
@@ -183,6 +222,7 @@ export default function App() {
       {/* ANA İÇERİK */}
       <main className="flex-1 flex overflow-hidden bg-transparent">
         
+        {/* KASA EKRANI */}
         {activeTab === 'pos' && (
           <div className="flex w-full">
             <div className="flex-1 p-6 flex flex-col overflow-hidden">
@@ -248,27 +288,39 @@ export default function App() {
           </div>
         )}
 
-        {/* ÜRÜNLER SEKMESİ */}
+        {/* ÜRÜNLER SEKMESİ (İÇERİ / DIŞARI AKTAR) */}
         {activeTab === 'products' && (
           <div className="p-8 w-full overflow-y-auto">
-            <div className="flex justify-between items-center mb-8"><h2 className="text-3xl font-black tracking-tight">Ürün Deposu</h2><button onClick={() => setShowAddForm(!showAddForm)} className="bg-emerald-500 text-zinc-950 px-6 py-3 rounded-2xl font-bold flex items-center gap-2 shadow-lg shadow-emerald-500/20"><Plus size={20}/> Yeni Ürün Ekle</button></div>
+            <div className="flex justify-between items-center mb-8">
+              <h2 className="text-3xl font-black tracking-tight">Ürün Deposu</h2>
+              <div className="flex gap-3">
+                <input type="file" accept=".csv" ref={fileInputRefProd} style={{display:'none'}} onChange={importProducts} />
+                <button onClick={() => fileInputRefProd.current.click()} className="bg-zinc-800 text-zinc-300 px-4 py-2 rounded-xl font-bold flex items-center gap-2 border border-zinc-700 hover:bg-zinc-700"><Upload size={18}/> İçeri Aktar</button>
+                <button onClick={exportProducts} className="bg-zinc-800 text-zinc-300 px-4 py-2 rounded-xl font-bold flex items-center gap-2 border border-zinc-700 hover:bg-zinc-700"><Download size={18}/> Dışarı Aktar</button>
+                <button onClick={() => setShowAddForm(!showAddForm)} className="bg-emerald-500 text-zinc-950 px-6 py-3 rounded-2xl font-bold flex items-center gap-2 shadow-lg shadow-emerald-500/20 ml-2"><Plus size={20}/> Yeni Ürün Ekle</button>
+              </div>
+            </div>
+            
             {showAddForm && (
-              <form onSubmit={handleAddProduct} className="bg-zinc-900 border border-zinc-800 p-8 rounded-3xl mb-8 grid grid-cols-2 lg:grid-cols-3 gap-6 animate-in slide-in-from-top duration-300">
-                <div className="space-y-2"><label className="text-xs font-bold text-zinc-500 uppercase ml-1">Ürün İsmi</label><input required value={pName} onChange={e => setPName(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 p-4 rounded-xl outline-none focus:border-emerald-500" placeholder="Örn: Dove Sabun 100gr"/></div>
+              <form onSubmit={handleAddProduct} className="bg-zinc-900 border border-zinc-800 p-8 rounded-3xl mb-8 grid grid-cols-2 lg:grid-cols-4 gap-6 animate-in slide-in-from-top duration-300">
+                <div className="space-y-2 col-span-2"><label className="text-xs font-bold text-zinc-500 uppercase ml-1">Ürün İsmi</label><input required value={pName} onChange={e => setPName(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 p-4 rounded-xl outline-none focus:border-emerald-500" placeholder="Örn: Dove Sabun 100gr"/></div>
                 <div className="space-y-2"><label className="text-xs font-bold text-zinc-500 uppercase ml-1">Barkod Numarası</label><input value={pBarcode} onChange={e => setPBarcode(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 p-4 rounded-xl outline-none focus:border-emerald-500" placeholder="Barkodu okutun..."/></div>
-                <div className="space-y-2"><label className="text-xs font-bold text-zinc-500 uppercase ml-1">Birim</label><select value={pUnit} onChange={e => setPUnit(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 p-4 rounded-xl outline-none"><option>Adet</option><option>Koli</option><option>Paket</option><option>Çuval</option></select></div>
-                <div className="space-y-2"><label className="text-xs font-bold text-zinc-500 uppercase ml-1">Net Fiyat (₺)</label><input required type="number" step="0.01" value={pNet} onChange={e => setPNet(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 p-4 rounded-xl outline-none focus:border-emerald-500" placeholder="0.00"/></div>
+                <div className="space-y-2"><label className="text-xs font-bold text-zinc-500 uppercase ml-1">Birim</label><select value={pUnit} onChange={e => setPUnit(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 p-4 rounded-xl outline-none"><option>Adet</option><option>Koli</option><option>Paket</option></select></div>
+                <div className="space-y-2"><label className="text-xs font-bold text-blue-400 uppercase ml-1">ALIŞ Fiyatı (Maliyet)</label><input type="number" step="0.01" value={pCost} onChange={e => setPCost(e.target.value)} className="w-full bg-blue-950/20 border border-blue-900 p-4 rounded-xl outline-none focus:border-blue-500 text-blue-300" placeholder="0.00"/></div>
+                <div className="space-y-2"><label className="text-xs font-bold text-emerald-500 uppercase ml-1">NET Satış Fiyatı (₺)</label><input required type="number" step="0.01" value={pNet} onChange={e => setPNet(e.target.value)} className="w-full bg-zinc-950 border border-emerald-900 p-4 rounded-xl outline-none focus:border-emerald-500" placeholder="0.00"/></div>
                 <div className="space-y-2"><label className="text-xs font-bold text-zinc-500 uppercase ml-1">KDV %</label><select value={pTax} onChange={e => setPTax(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 p-4 rounded-xl outline-none"><option value="0">0</option><option value="1">1</option><option value="10">10</option><option value="20">20</option></select></div>
                 <div className="flex items-end"><button type="submit" className="w-full bg-emerald-500 text-zinc-950 font-black py-4 rounded-xl">ÜRÜNÜ KAYDET</button></div>
               </form>
             )}
             <div className="bg-zinc-900 rounded-3xl overflow-hidden border border-zinc-800 shadow-xl">
               <table className="w-full text-left">
-                <thead className="bg-zinc-950 text-zinc-500 text-xs font-bold uppercase tracking-widest"><tr><th className="p-5">Ürün Bilgisi</th><th className="p-5">Barkod</th><th className="p-5">Birim</th><th className="p-5 text-right">Satış Fiyatı</th><th className="p-5 text-right">İşlem</th></tr></thead>
+                <thead className="bg-zinc-950 text-zinc-500 text-xs font-bold uppercase tracking-widest"><tr><th className="p-5">Ürün Bilgisi</th><th className="p-5">Barkod</th><th className="p-5">Birim</th><th className="p-5 text-right">Alış (Maliyet)</th><th className="p-5 text-right">Brüt Satış Fiyatı</th><th className="p-5 text-right">İşlem</th></tr></thead>
                 <tbody className="divide-y divide-zinc-800/50">
                   {products.map(p => (
                     <tr key={p.id} className="hover:bg-zinc-800/30 transition-colors">
-                      <td className="p-5 font-bold text-emerald-400">{p.name}</td><td className="p-5 font-mono text-zinc-500">{p.barcode || '-'}</td><td className="p-5 text-sm text-zinc-400">{p.unit}</td><td className="p-5 text-right font-black text-white text-lg font-mono">₺{p.grossPrice}</td>
+                      <td className="p-5 font-bold text-emerald-400">{p.name}</td><td className="p-5 font-mono text-zinc-500">{p.barcode || '-'}</td><td className="p-5 text-sm text-zinc-400">{p.unit}</td>
+                      <td className="p-5 text-right font-medium text-blue-400 text-sm">₺{p.costPrice || '0.00'}</td>
+                      <td className="p-5 text-right font-black text-white text-lg font-mono">₺{p.grossPrice}</td>
                       <td className="p-5 text-right"><button onClick={() => deleteDoc(doc(db, 'products', p.id))} className="text-zinc-700 hover:text-red-500 p-2 transition-colors"><Trash2 size={20}/></button></td>
                     </tr>
                   ))}
@@ -278,10 +330,16 @@ export default function App() {
           </div>
         )}
 
-        {/* MÜŞTERİLER / CARİ SEKMESİ */}
+        {/* MÜŞTERİLER SEKMESİ (İÇERİ / DIŞARI AKTAR) */}
         {activeTab === 'customers' && (
           <div className="p-8 w-full overflow-y-auto">
-            <div className="flex justify-between items-center mb-8"><h2 className="text-3xl font-black">Cari Hesaplar</h2><button onClick={() => setShowCustomerForm(!showCustomerForm)} className="bg-emerald-500 text-zinc-950 px-6 py-3 rounded-2xl font-bold flex items-center gap-2"><UserPlus size={20}/> Yeni Cari Ekle</button></div>
+            <div className="flex justify-between items-center mb-8">
+              <h2 className="text-3xl font-black">Cari Hesaplar</h2>
+              <div className="flex gap-3">
+                <button onClick={exportCustomers} className="bg-zinc-800 text-zinc-300 px-4 py-2 rounded-xl font-bold flex items-center gap-2 border border-zinc-700 hover:bg-zinc-700"><Download size={18}/> Dışarı Aktar</button>
+                <button onClick={() => setShowCustomerForm(!showCustomerForm)} className="bg-emerald-500 text-zinc-950 px-6 py-3 rounded-2xl font-bold flex items-center gap-2"><UserPlus size={20}/> Yeni Cari Ekle</button>
+              </div>
+            </div>
             {showCustomerForm && (
               <form onSubmit={handleAddCustomer} className="bg-zinc-900 border border-zinc-800 p-8 rounded-3xl mb-8 flex flex-wrap gap-6 animate-in slide-in-from-top">
                 <div className="flex-1 min-w-[200px] space-y-2"><label className="text-xs font-bold text-zinc-500 uppercase ml-1">Firma / Müşteri Adı</label><input required value={cName} onChange={e => setCName(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 p-4 rounded-xl outline-none" placeholder="Örn: Beyoğlu Buklet"/></div>
@@ -295,10 +353,7 @@ export default function App() {
                 <div key={c.id} className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl flex justify-between items-center hover:border-emerald-500/30 transition-all">
                   <div className="space-y-1">
                     <h3 className="text-xl font-black text-white">{c.name}</h3>
-                    <div className="flex gap-4">
-                      <span className="flex items-center gap-1 text-zinc-500 text-xs font-bold bg-zinc-950 px-2 py-1 rounded"><Phone size={12}/> {c.phone || '-'}</span>
-                      <span className="flex items-center gap-1 text-zinc-500 text-xs font-bold bg-zinc-950 px-2 py-1 rounded">V.No: {c.taxNum || '-'}</span>
-                    </div>
+                    <div className="flex gap-4"><span className="flex items-center gap-1 text-zinc-500 text-xs font-bold bg-zinc-950 px-2 py-1 rounded"><Phone size={12}/> {c.phone || '-'}</span><span className="flex items-center gap-1 text-zinc-500 text-xs font-bold bg-zinc-950 px-2 py-1 rounded">V.No: {c.taxNum || '-'}</span></div>
                   </div>
                   <div className="text-right space-y-3">
                     <div className={`text-2xl font-black font-mono ${c.balance > 0 ? 'text-red-500' : c.balance < 0 ? 'text-emerald-500' : 'text-zinc-600'}`}>
@@ -315,25 +370,38 @@ export default function App() {
           </div>
         )}
 
-        {/* RAPORLAR SEKMESİ */}
+        {/* RAPORLAR & STRATEJİ SEKMESİ (KAR / ZARAR + PARAŞÜT ENTEGRASYON) */}
         {activeTab === 'reports' && (
           <div className="p-8 w-full overflow-y-auto">
-            <h2 className="text-3xl font-black mb-10">Mali Durum Paneli</h2>
-            <div className="grid grid-cols-3 gap-8 mb-12">
-              <div className="bg-zinc-900 border border-zinc-800 p-8 rounded-[40px] shadow-2xl relative overflow-hidden group">
-                <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity"><TrendingUp size={100}/></div>
-                <div className="text-emerald-500 font-bold text-sm mb-2 uppercase tracking-tighter">Toplam Gelir</div>
-                <div className="text-5xl font-black text-white">₺{sales.reduce((a, b) => a + b.total, 0).toFixed(2)}</div>
+            <div className="flex justify-between items-center mb-10">
+              <h2 className="text-3xl font-black">Strateji ve Rapor Paneli</h2>
+              <button onClick={() => {
+                const data = customers.map(c => [c.name.replace(/,/g, ''), c.taxNum, c.phone, '', '', '', '', '', c.balance]);
+                downloadCSV(data, ["Unvan", "Vergi No", "Telefon", "E-posta", "Il", "Ilce", "Adres", "Musteri Tipi", "Acilis Bakiyesi"], "parasut_musteriler_sablonu.csv");
+                alert("Paraşüt uyumlu Müşteri şablonu indirildi! Bunu Paraşüt'e yükleyebilirsiniz.");
+              }} className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-3 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-600/20"><FileSpreadsheet size={20}/> Paraşüt'e Aktar (Müşteriler)</button>
+            </div>
+
+            <div className="grid grid-cols-4 gap-6 mb-12">
+              <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl relative overflow-hidden group">
+                <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity"><TrendingUp size={80}/></div>
+                <div className="text-zinc-400 font-bold text-xs mb-2 uppercase tracking-tighter">Brüt Ciro (Satışlar)</div>
+                <div className="text-3xl font-black text-white">₺{totalIncome.toFixed(2)}</div>
               </div>
-              <div className="bg-zinc-900 border border-zinc-800 p-8 rounded-[40px] shadow-2xl relative overflow-hidden group">
-                <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity"><TrendingDown size={100}/></div>
-                <div className="text-red-500 font-bold text-sm mb-2 uppercase tracking-tighter">Toplam Gider</div>
-                <div className="text-5xl font-black text-white">₺{expenses.reduce((a, b) => a + b.amount, 0).toFixed(2)}</div>
+              <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl relative overflow-hidden group">
+                <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity"><Package size={80}/></div>
+                <div className="text-blue-400 font-bold text-xs mb-2 uppercase tracking-tighter">Satılan Malın Maliyeti</div>
+                <div className="text-3xl font-black text-white">₺{totalCogs.toFixed(2)}</div>
               </div>
-              <div className={`p-8 rounded-[40px] shadow-2xl relative overflow-hidden group border-2 ${netProfit >= 0 ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-red-500/10 border-red-500/20'}`}>
-                <div className="absolute top-0 right-0 p-4 opacity-10"><Wallet size={100}/></div>
-                <div className={`font-bold text-sm mb-2 uppercase tracking-tighter ${netProfit >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>Net Kar/Zarar</div>
-                <div className={`text-5xl font-black ${netProfit >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>₺{netProfit.toFixed(2)}</div>
+              <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl relative overflow-hidden group">
+                <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity"><TrendingDown size={80}/></div>
+                <div className="text-red-500 font-bold text-xs mb-2 uppercase tracking-tighter">Dükkan Giderleri</div>
+                <div className="text-3xl font-black text-white">₺{totalExpense.toFixed(2)}</div>
+              </div>
+              <div className={`p-6 rounded-3xl relative overflow-hidden group border-2 ${netCommercialProfit >= 0 ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
+                <div className="absolute top-0 right-0 p-4 opacity-10"><Wallet size={80}/></div>
+                <div className={`font-bold text-xs mb-2 uppercase tracking-tighter ${netCommercialProfit >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>Net Ticari Kar</div>
+                <div className={`text-3xl font-black ${netCommercialProfit >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>₺{netCommercialProfit.toFixed(2)}</div>
               </div>
             </div>
 
@@ -362,7 +430,20 @@ export default function App() {
         )}
       </main>
 
-      {/* İŞLEM BAŞARILI / FATURA MODALI */}
+      {/* --- MODALLAR --- */}
+      {isVeresiyeModalOpen && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-[40px] w-full max-w-[500px] shadow-2xl overflow-hidden animate-in zoom-in duration-300">
+            <div className="p-8 border-b border-zinc-800 flex justify-between items-center bg-zinc-950/50"><h3 className="text-2xl font-black text-emerald-500 flex items-center gap-2"><Users size={28}/> Cari Seçimi</h3><button onClick={() => setIsVeresiyeModalOpen(false)} className="text-zinc-500 hover:text-white"><X size={30}/></button></div>
+            <div className="p-8">
+              <p className="text-zinc-400 mb-6 text-lg font-medium">Toplam <span className="text-white font-black text-2xl">₺{finalTotal.toFixed(2)}</span> tutarındaki satış hangi cariye yazılsın?</p>
+              <select value={cartCustomer} onChange={e => setCartCustomer(e.target.value)} className="w-full bg-zinc-950 border border-zinc-700 p-5 rounded-2xl text-white outline-none mb-8 text-xl focus:border-emerald-500"><option value="">-- Müşteri / Firma Seçin --</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name} (Bakiye: ₺{c.balance})</option>)}</select>
+              <button onClick={() => finishSale('Veresiye')} className="w-full bg-emerald-500 text-zinc-950 font-black py-6 rounded-2xl text-xl shadow-lg shadow-emerald-500/20 active:scale-95 transition-all">SATIŞI ONAYLA VE BORÇ YAZ</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {lastSale && (
         <div className="fixed inset-0 bg-black/95 flex items-center justify-center z-[200]">
           <div className="bg-zinc-900 p-12 rounded-[50px] text-center border-2 border-emerald-500/50 shadow-2xl animate-in zoom-in duration-500">
