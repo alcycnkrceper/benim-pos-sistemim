@@ -146,27 +146,23 @@ export default function App() {
     setExpName(''); setExpAmount('');
   };
 
-  // --- EXCEL (.XLSX) PARAŞÜT SATIŞ FATURASI AKTARIMI ---
+  // --- EXCEL (.XLSX) PARAŞÜT SATIŞ FATURASI AKTARIMI (TEMİZ V5 SÜRÜM) ---
   const exportParasutInvoices = () => {
-    const helpText = "Satış Faturaları\n\n- Yıldız ile belirlenen alanları doldurmanız yeterlidir.\n- Faturalar ile beraber Paraşüt’te kayıtlı olmayan Müşteriler ve Hizmet/Ürünler de oluşturulur.\n- Paraşütte kayıtlı olan müşteriler içeri alınan faturalar ile ilişkilendirilir.\n- Fatura Türü, “Fatura”, \"Taslak\" (ya da “Proforma”) veya \"Konaklama\" olabilir. Boş bırakmanız halinde “Fatura” olarak kaydedilir.\n- Fatura döviz cinsi TRL, USD, EUR veya GBP olabilir. Döviz cinsi belirtilmediği takdirde TRL olarak kabul edilir.\n- Proforma faturalarda fatura döviz kuru boş bırakılmalıdır. Eğer bir kur belirtilmişse göz ardı edilir. Faturalarda ise döviz kuru zorunludur.\n- Vade tarihi olmayan veya ileri bir tarihe denk gelen faturalar açık fatura olarak içeri alınır. Geçmiş tarihli tahsilatlar gerçekleşti olarak varsayılır ve kasa hesabınıza eklenir.\n- Yabancı döviz cinsinden kesilen faturalar için yapılan tahsilatların Türk Lirası karşılıklarınin girilmesi zorunludur. TL faturalarda ve diğer açık faturalarda bu alan boş bırakılmalıdır.\n- Bir faturaya birden fazla hizmet/ürün eklemek için faturayı takip eden satırlarda sadece hizmet/ürün detaylarını doldurun.\n- KDV Oranı 10 Temmuz 2023 itibariyle 0, 1, 10 veya 20 olmalıdır.\n- Fatura Sıra Numarasının başına sıfır eklemenize gerek yoktur.\n- Deponun belirtilmemesi durumunda ürünler varsayılan deponuzan çıkmış olarak kabul edilir.\n- Konaklama Vergisi Oranı belirtilmemiş ise Konaklama Vergisi yok, oran 0 ise Konaklama Vergisi istisna kabul edilir.\n- Tablonun sütun yapısını bozmayın.\n- Bu yardım metnini silmeyin.\n- Destek için destek@parasut.com veya 0212 292 04 94";
-
-    const helpRow = new Array(20).fill("");
-    helpRow[0] = helpText; 
-    const emptyRow = new Array(20).fill(""); 
     
-    // HATA ÇÖZÜMÜ 1: BAŞLIKLARDAKİ YILDIZ (*) İŞARETLERİ KALDIRILDI
-    const headers = ["MÜŞTERİ ÜNVANI","FATURA İSMİ","FATURA TARİHİ","DÖVİZ CİNSİ","DÖVİZ KURU","VADE TARİHİ","TAHSİLAT TL KARŞILIĞI","FATURA TÜRÜ","FATURA SERİ","FATURA SIRA NO","KATEGORİ","HİZMET/ÜRÜN","HİZMET/ÜRÜN AÇIKLAMASI","ÇIKIŞ DEPOSU","MİKTAR","BİRİM FİYATI","İNDİRİM TUTARI","KDV ORANI","ÖİV ORANI","KONAKLAMA VERGİSİ ORANI"];
-
-    const data = [
-      helpRow,
-      emptyRow,
-      headers
+    // GEREKSİZ UYARI METİNLERİ VE BOŞ SATIRLAR SİLİNDİ. SADECE TEMİZ BAŞLIKLAR:
+    const headers = [
+      "Müşteri Ünvanı", "Fatura İsmi", "Fatura Tarihi", "Döviz Cinsi", "Döviz Kuru", 
+      "Vade Tarihi", "Tahsilat TL Karşılığı", "Fatura Türü", "Fatura Seri", "Fatura Sıra No", 
+      "Kategori", "Hizmet/Ürün", "Hizmet/Ürün Açıklaması", "Çıkış Deposu", "Miktar", 
+      "Birim Fiyatı", "İndirim Tutarı", "KDV Oranı", "ÖİV Oranı", "Konaklama Vergisi Oranı"
     ];
+
+    const data = [headers]; // Excel'in 1. Satırı direkt başlıklar oldu.
 
     let invoiceCounter = 1;
 
     sales.forEach(sale => {
-      if (sale.method === 'Tahsilat') return;
+      if (sale.method === 'Tahsilat') return; // Tahsilatlar faturaya girmez.
 
       let fDate = sale.date.split(' ')[0]; 
       try {
@@ -197,10 +193,10 @@ export default function App() {
             fDate, 
             sale.method !== 'Veresiye' ? (sale.total || 0).toFixed(2) : "", 
             "Fatura",
-            "FTR", // HATA ÇÖZÜMÜ 2: "A" YERİNE "FTR" YAZILDI (2-3 KARAKTER KURALI)
+            "FTR", 
             invoiceCounter,
             "", 
-            (item.name || ''),
+            (item.name || 'İsimsiz Ürün'),
             "", 
             "Merkez", 
             item.qty,
@@ -213,7 +209,7 @@ export default function App() {
         } else {
           data.push([
             "", "", "", "", "", "", "", "", "", "", "",
-            (item.name || ''),
+            (item.name || 'İsimsiz Ürün'),
             "",
             "Merkez",
             item.qty,
@@ -234,6 +230,7 @@ export default function App() {
     XLSX.writeFile(wb, "parasut_satis_faturalari.xlsx");
   };
 
+  // Basit CSV İndirme
   const downloadCSV = (dataList, headers, filename) => {
     const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + [headers.join(","), ...dataList.map(e => e.join(","))].join("\n");
     const link = document.createElement("a");
@@ -358,7 +355,7 @@ export default function App() {
           </div>
         )}
 
-        {/* ÜRÜNLER SEKMESİ (İÇERİ / DIŞARI AKTAR) */}
+        {/* ÜRÜNLER SEKMESİ */}
         {activeTab === 'products' && (
           <div className="p-8 w-full overflow-y-auto">
             <div className="flex justify-between items-center mb-8">
