@@ -146,15 +146,22 @@ export default function App() {
     setExpName(''); setExpAmount('');
   };
 
-  // --- EXCEL (.XLSX) PARAŞÜT SATIŞ FATURASI AKTARIMI ---
+  // --- EXCEL (.XLSX) PARAŞÜT SATIŞ FATURASI AKTARIMI (HATA DÜZELTİLDİ) ---
   const exportParasutInvoices = () => {
     // Paraşüt'ün zorunlu kıldığı başlık metni
     const helpText = "Satış Faturaları\n\n- Yıldız ile belirlenen alanları doldurmanız yeterlidir.\n- Faturalar ile beraber Paraşüt’te kayıtlı olmayan Müşteriler ve Hizmet/Ürünler de oluşturulur.\n- Paraşütte kayıtlı olan müşteriler içeri alınan faturalar ile ilişkilendirilir.\n- Fatura Türü, “Fatura”, \"Taslak\" (ya da “Proforma”) veya \"Konaklama\" olabilir. Boş bırakmanız halinde “Fatura” olarak kaydedilir.\n- Fatura döviz cinsi TRL, USD, EUR veya GBP olabilir. Döviz cinsi belirtilmediği takdirde TRL olarak kabul edilir.\n- Proforma faturalarda fatura döviz kuru boş bırakılmalıdır. Eğer bir kur belirtilmişse göz ardı edilir. Faturalarda ise döviz kuru zorunludur.\n- Vade tarihi olmayan veya ileri bir tarihe denk gelen faturalar açık fatura olarak içeri alınır. Geçmiş tarihli tahsilatlar gerçekleşti olarak varsayılır ve kasa hesabınıza eklenir.\n- Yabancı döviz cinsinden kesilen faturalar için yapılan tahsilatların Türk Lirası karşılıklarınin girilmesi zorunludur. TL faturalarda ve diğer açık faturalarda bu alan boş bırakılmalıdır.\n- Bir faturaya birden fazla hizmet/ürün eklemek için faturayı takip eden satırlarda sadece hizmet/ürün detaylarını doldurun.\n- KDV Oranı 10 Temmuz 2023 itibariyle 0, 1, 10 veya 20 olmalıdır.\n- Fatura Sıra Numarasının başına sıfır eklemenize gerek yoktur.\n- Deponun belirtilmemesi durumunda ürünler varsayılan deponuzan çıkmış olarak kabul edilir.\n- Konaklama Vergisi Oranı belirtilmemiş ise Konaklama Vergisi yok, oran 0 ise Konaklama Vergisi istisna kabul edilir.\n- Tablonun sütun yapısını bozmayın.\n- Bu yardım metnini silmeyin.\n- Destek için destek@parasut.com veya 0212 292 04 94";
 
+    // EXCEL'DE SATIRLARIN KAYMAMASI İÇİN DÜZELTME: İlk iki satırı tam 20 hücre boşlukla dolduruyoruz
+    const helpRow = new Array(20).fill("");
+    helpRow[0] = helpText; // A1 hücresine dev metin giriyor
+    const emptyRow = new Array(20).fill(""); // Satır 2 tamamen boş ama tanımlı
+    
+    const headers = ["MÜŞTERİ ÜNVANI *","FATURA İSMİ","FATURA TARİHİ","DÖVİZ CİNSİ","DÖVİZ KURU","VADE TARİHİ","TAHSİLAT TL KARŞILIĞI","FATURA TÜRÜ","FATURA SERİ","FATURA SIRA NO","KATEGORİ","HİZMET/ÜRÜN *","HİZMET/ÜRÜN AÇIKLAMASI","ÇIKIŞ DEPOSU *","MİKTAR *","BİRİM FİYATI *","İNDİRİM TUTARI","KDV ORANI *","ÖİV ORANI","KONAKLAMA VERGİSİ ORANI"];
+
     const data = [
-      [helpText],
-      [], // Boş Satır
-      ["MÜŞTERİ ÜNVANI *","FATURA İSMİ","FATURA TARİHİ","DÖVİZ CİNSİ","DÖVİZ KURU","VADE TARİHİ","TAHSİLAT TL KARŞILIĞI","FATURA TÜRÜ","FATURA SERİ","FATURA SIRA NO","KATEGORİ","HİZMET/ÜRÜN *","HİZMET/ÜRÜN AÇIKLAMASI","ÇIKIŞ DEPOSU *","MİKTAR *","BİRİM FİYATI *","İNDİRİM TUTARI","KDV ORANI *","ÖİV ORANI","KONAKLAMA VERGİSİ ORANI"]
+      helpRow,  // Satır 1
+      emptyRow, // Satır 2
+      headers   // Satır 3
     ];
 
     let invoiceCounter = 1;
@@ -163,12 +170,27 @@ export default function App() {
       // Tahsilat kayıtları fatura kalemi değildir, atla
       if (sale.method === 'Tahsilat') return;
 
-      // Tarih Formatlama "YYYY-MM-DD"
-      let fDate = "";
+      // TARİH FORMATI DÜZELTMESİ (Paraşüt'ün istediği net YYYY-MM-DD formatı)
+      let fDate = sale.date.split(' ')[0]; // Örn: 15.03.2024 veya 15/03/2024
       try {
-        const parts = sale.date.split(' ')[0].split('.');
-        fDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
-      } catch(e) { fDate = sale.date.split(' ')[0]; }
+        let p = [];
+        if (fDate.includes('.')) p = fDate.split('.');
+        else if (fDate.includes('/')) p = fDate.split('/');
+        else if (fDate.includes('-')) p = fDate.split('-');
+
+        if (p.length === 3) {
+          // Eğer 3. kısım yıl ise (2024)
+          if (p[2].length === 4) {
+            fDate = `${p[2]}-${p[1].padStart(2, '0')}-${p[0].padStart(2, '0')}`;
+          } 
+          // Eğer 1. kısım yıl ise (Zaten 2024.03.15 gibi)
+          else if (p[0].length === 4) {
+            fDate = `${p[0]}-${p[1].padStart(2, '0')}-${p[2].padStart(2, '0')}`;
+          }
+        }
+      } catch(e) {
+        // Hata durumunda fDate olduğu gibi kalır
+      }
 
       const customerName = (sale.customerName && sale.customerName !== 'Perakende Müşteri') ? sale.customerName : 'Perakende Müşteri';
       
@@ -178,7 +200,7 @@ export default function App() {
           data.push([
             customerName,
             `Satış Fişi #${sale.id.slice(-6).toUpperCase()}`,
-            fDate,
+            fDate, // Düzeltilmiş formatta tarih
             "TRL", // DÖVİZ CİNSİ
             "", // DÖVİZ KURU
             fDate, // VADE TARİHİ
@@ -348,7 +370,7 @@ export default function App() {
           </div>
         )}
 
-        {/* ÜRÜNLER SEKMESİ (İÇERİ / DIŞARI AKTAR) */}
+        {/* ÜRÜNLER SEKMESİ */}
         {activeTab === 'products' && (
           <div className="p-8 w-full overflow-y-auto">
             <div className="flex justify-between items-center mb-8">
@@ -430,13 +452,12 @@ export default function App() {
           </div>
         )}
 
-        {/* RAPORLAR & STRATEJİ SEKMESİ (EXCEL PARAŞÜT BUTONU BURADA) */}
+        {/* RAPORLAR & STRATEJİ SEKMESİ */}
         {activeTab === 'reports' && (
           <div className="p-8 w-full overflow-y-auto">
             <div className="flex justify-between items-center mb-10">
               <h2 className="text-3xl font-black">Strateji ve Rapor Paneli</h2>
               
-              {/* Paraşüt Fatura İndirme (EXCEL) Butonu */}
               <button onClick={exportParasutInvoices} className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-3 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-600/20">
                 <FileSpreadsheet size={20}/> Paraşüt'e Aktar (Tüm Faturaları İndir)
               </button>
