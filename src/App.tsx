@@ -154,7 +154,8 @@ export default function App() {
     helpRow[0] = helpText; 
     const emptyRow = new Array(20).fill(""); 
     
-    const headers = ["MÜŞTERİ ÜNVANI *","FATURA İSMİ","FATURA TARİHİ","DÖVİZ CİNSİ","DÖVİZ KURU","VADE TARİHİ","TAHSİLAT TL KARŞILIĞI","FATURA TÜRÜ","FATURA SERİ","FATURA SIRA NO","KATEGORİ","HİZMET/ÜRÜN *","HİZMET/ÜRÜN AÇIKLAMASI","ÇIKIŞ DEPOSU *","MİKTAR *","BİRİM FİYATI *","İNDİRİM TUTARI","KDV ORANI *","ÖİV ORANI","KONAKLAMA VERGİSİ ORANI"];
+    // HATA ÇÖZÜMÜ 1: BAŞLIKLARDAKİ YILDIZ (*) İŞARETLERİ KALDIRILDI
+    const headers = ["MÜŞTERİ ÜNVANI","FATURA İSMİ","FATURA TARİHİ","DÖVİZ CİNSİ","DÖVİZ KURU","VADE TARİHİ","TAHSİLAT TL KARŞILIĞI","FATURA TÜRÜ","FATURA SERİ","FATURA SIRA NO","KATEGORİ","HİZMET/ÜRÜN","HİZMET/ÜRÜN AÇIKLAMASI","ÇIKIŞ DEPOSU","MİKTAR","BİRİM FİYATI","İNDİRİM TUTARI","KDV ORANI","ÖİV ORANI","KONAKLAMA VERGİSİ ORANI"];
 
     const data = [
       helpRow,
@@ -196,9 +197,9 @@ export default function App() {
             fDate, 
             sale.method !== 'Veresiye' ? (sale.total || 0).toFixed(2) : "", 
             "Fatura",
-            "A",
+            "FTR", // HATA ÇÖZÜMÜ 2: "A" YERİNE "FTR" YAZILDI (2-3 KARAKTER KURALI)
             invoiceCounter,
-            "", // HATA BURADAYDI, ARTIK BOŞ ("Genel Satış" İPTAL EDİLDİ)
+            "", 
             (item.name || ''),
             "", 
             "Merkez", 
@@ -233,7 +234,6 @@ export default function App() {
     XLSX.writeFile(wb, "parasut_satis_faturalari.xlsx");
   };
 
-  // Basit CSV İndirme
   const downloadCSV = (dataList, headers, filename) => {
     const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + [headers.join(","), ...dataList.map(e => e.join(","))].join("\n");
     const link = document.createElement("a");
@@ -358,7 +358,7 @@ export default function App() {
           </div>
         )}
 
-        {/* ÜRÜNLER SEKMESİ */}
+        {/* ÜRÜNLER SEKMESİ (İÇERİ / DIŞARI AKTAR) */}
         {activeTab === 'products' && (
           <div className="p-8 w-full overflow-y-auto">
             <div className="flex justify-between items-center mb-8">
