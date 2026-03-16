@@ -10,7 +10,8 @@ import {
   ChevronDown, ChevronUp, ClipboardCheck, FolderOpen, Pencil, ArrowUpDown,
   SendHorizonal, Ban, ShoppingBag, FileText, Receipt, MessageSquare, Filter,
   LogIn, LogOut, UserCog, Shield, History, RefreshCw, ArrowLeftRight, Tag,
-  Clock, UserCheck, Lock, Key, Activity
+  Clock, UserCheck, Lock, Key, Activity, FileEdit, SplitSquareHorizontal,
+  CheckCircle2, Handshake, BadgePercent, Send
 } from 'lucide-react';
 
 // ── XLSX CDN ───────────────────────────────────────────────────────────────
@@ -39,7 +40,29 @@ const db = getFirestore(app);
 type PaperSize = '58mm' | '80mm' | 'a5' | 'a4';
 type BorderStyle = 'thick' | 'thin' | 'none';
 type FontSize = 'small' | 'normal' | 'large';
-type StaffRole = 'admin' | 'kasiyer' | 'depo';
+type StaffRole = 'admin' | 'ozel';
+
+// Tüm yetki tanımları — her biri ayrı ayrı açılıp kapatılabilir
+const ALL_PERMISSIONS = [
+  { key: 'pos',              group: 'Satış',    label: 'Hızlı Satış (POS)',        icon: '🛒' },
+  { key: 'orders',           group: 'Satış',    label: 'Siparişli Satışlar',        icon: '📦' },
+  { key: 'returns',          group: 'Satış',    label: 'İade & Değişim',            icon: '🔄' },
+  { key: 'purchases',        group: 'Stok',     label: 'Alış Faturaları',           icon: '⬇️' },
+  { key: 'stock.products',   group: 'Stok',     label: 'Ürünler (görüntüle/düzenle)',icon: '📋' },
+  { key: 'stock.movements',  group: 'Stok',     label: 'Stok Hareketleri',          icon: '↕️' },
+  { key: 'stock.count',      group: 'Stok',     label: 'Stok Sayımı',               icon: '🔢' },
+  { key: 'stock.tracking',   group: 'Stok',     label: 'Stok Takibi',               icon: '📊' },
+  { key: 'stock.category',   group: 'Stok',     label: 'Kategoriler',               icon: '🏷️' },
+  { key: 'customers',        group: 'Cari',     label: 'Cari Hesaplar',             icon: '👥' },
+  { key: 'customers.tahsilat',group:'Cari',     label: 'Tahsilat Alma',             icon: '💵' },
+  { key: 'reports.genel',    group: 'Rapor',    label: 'Genel Rapor',               icon: '📈' },
+  { key: 'reports.gunSonu',  group: 'Rapor',    label: 'Gün Sonu Raporu',           icon: '🌙' },
+  { key: 'reports.kdv',      group: 'Rapor',    label: 'KDV Raporu',                icon: '🧾' },
+  { key: 'reports.personel', group: 'Rapor',    label: 'Personel Geçmişi',          icon: '🔍' },
+  { key: 'receipt',          group: 'Ayarlar',  label: 'Fiş Tasarımı',              icon: '🖨️' },
+  { key: 'personel',         group: 'Ayarlar',  label: 'Personel Yönetimi',         icon: '🔑' },
+] as const;
+type PermKey = typeof ALL_PERMISSIONS[number]['key'];
 
 interface ReceiptSettings {
   companyName: string; companySubtitle: string; address: string;
@@ -326,9 +349,14 @@ export default function App(){
   const[reportTab,setReportTab]=useState<'genel'|'gunSonu'|'kdv'|'personel'>('genel');
 
   // ── Personel ──────────────────────────────────────────────────────────
+  // ── Personel ──────────────────────────────────────────────────────────
   const[newStaffName,setNewStaffName]=useState('');
   const[newStaffPin,setNewStaffPin]=useState('');
-  const[newStaffRole,setNewStaffRole]=useState<StaffRole>('kasiyer');
+  const[newStaffRole,setNewStaffRole]=useState<StaffRole>('ozel');
+  const[newStaffPerms,setNewStaffPerms]=useState<string[]>(['pos','orders','returns','customers','customers.tahsilat']);
+  const[editingStaff,setEditingStaff]=useState<any>(null);
+  const[editStaffPerms,setEditStaffPerms]=useState<string[]>([]);
+  const[editStaffPin,setEditStaffPin]=useState('');
   const[staffLogFilter,setStaffLogFilter]=useState('all');
   const[staffLogDateFilter,setStaffLogDateFilter]=useState('');
 
@@ -337,7 +365,21 @@ export default function App(){
   const[draftSettings,setDraftSettings]=useState<ReceiptSettings>(loadSettings);
   const[settingsSaved,setSettingsSaved]=useState(false);
 
-  const fileInputRefProd=useRef<HTMLInputElement>(null);
+  // ── Teklifler ────────────────────────────────────────────────────────
+  const [quotes,setQuotes]=useState<any[]>([]);
+  const [quoteDraft,setQuoteDraft]=useState<any[]>([]);
+  const [quoteCustomer,setQuoteCustomer]=useState('');
+  const [quoteDiscount,setQuoteDiscount]=useState('');
+  const [quoteNote,setQuoteNote]=useState('');
+  const [printQuote,setPrintQuote]=useState<any>(null);
+  const [quoteSearch,setQuoteSearch]=useState('');
+  const [quoteFilter,setQuoteFilter]=useState<'all'|'beklemede'|'onaylandi'|'reddedildi'>('all');
+
+  // ── Fiyat Bölme ───────────────────────────────────────────────────────
+  const [splitModal,setSplitModal]=useState(false);
+  const [splitNakit,setSplitNakit]=useState('');
+  const [splitKart,setSplitKart]=useState('');
+
   const CAT_COLORS=['#10b981','#3b82f6','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316'];
 
   // ── Firebase listeners ────────────────────────────────────────────────
@@ -350,21 +392,52 @@ export default function App(){
     const u6=onSnapshot(collection(db,'categories'),s=>setCategories(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u7=onSnapshot(collection(db,'custCategories'),s=>setCustCategories(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u8=onSnapshot(collection(db,'orders'),s=>setOrders(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u8b=onSnapshot(collection(db,'quotes'),s=>setQuotes(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u9=onSnapshot(collection(db,'returns'),s=>setReturns(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u10=onSnapshot(collection(db,'staff'),s=>setStaffList(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u11=onSnapshot(collection(db,'staffLogs'),s=>setStaffLogs(s.docs.map(d=>({id:d.id,...d.data()}))));
-    return()=>{u1();u2();u3();u4();u5();u6();u7();u8();u9();u10();u11();};
+    return()=>{u1();u2();u3();u4();u5();u6();u7();u8();u8b();u9();u10();u11();};
   },[]);
 
   useEffect(()=>{
+    // Barkod okuyucu tespiti: çok hızlı gelen tuş dizisi (okuyucu <30ms arayla basar)
     let buf='';
+    let lastKeyTime=0;
+    let bufTimer:ReturnType<typeof setTimeout>|null=null;
+    const SCANNER_SPEED=80; // ms — okuyucu bu süreden hızlıysa barkod olarak kabul et
     const hk=(e:KeyboardEvent)=>{
-      if((e.target as HTMLElement).tagName==='INPUT'||(e.target as HTMLElement).tagName==='SELECT')return;
-      if(e.key==='Enter'){if(buf.length>2){const f=products.find(p=>p.barcode===buf);if(f){setActivePage('pos');addToCart(f);setFlash(true);setTimeout(()=>setFlash(false),300);}buf='';}
-      }else if(e.key.length===1){buf+=e.key;}
-      setTimeout(()=>{buf='';},200);
+      const now=Date.now();
+      const target=e.target as HTMLElement;
+      const inInput=target.tagName==='INPUT'||target.tagName==='SELECT'||target.tagName==='TEXTAREA';
+      const timeSinceLast=now-lastKeyTime;
+      lastKeyTime=now;
+      // Enter → buffer dolu ve hızlı geldi → barkod!
+      if(e.key==='Enter'){
+        if(buf.length>2){
+          const f=products.find(p=>p.barcode===buf);
+          if(f){
+            setActivePage('pos');
+            addToCart(f);
+            setFlash(true);
+            setTimeout(()=>setFlash(false),300);
+            // Search input'u temizle
+            setSearchQuery('');
+            // Enter'ın form submit etmesini önle
+            e.preventDefault();
+          }
+        }
+        buf='';
+        return;
+      }
+      // Input içindeyiz AMA hızlı geliyorsa (barkod okuyucu) yine de buffer'a ekle
+      if(inInput && timeSinceLast>SCANNER_SPEED) return; // yavaş = manuel yazma, atla
+      if(e.key.length===1){buf+=e.key;}
+      // Buffer'ı temizle (son tuştan 300ms sonra)
+      if(bufTimer)clearTimeout(bufTimer);
+      bufTimer=setTimeout(()=>{buf='';},300);
     };
-    window.addEventListener('keydown',hk);return()=>window.removeEventListener('keydown',hk);
+    window.addEventListener('keydown',hk);
+    return()=>{window.removeEventListener('keydown',hk);if(bufTimer)clearTimeout(bufTimer);};
   },[products]);
 
   useEffect(()=>{if(activePage==='stock.count'){const d:Record<string,string>={};products.forEach(p=>{d[p.id]=String(p.stock||0);});setCountDraft(d);}},[activePage]);
@@ -394,14 +467,20 @@ export default function App(){
     'gönderildi':{label:'Gönderildi',color:'text-emerald-400',bg:'bg-emerald-500/20'},
     'iptal':{label:'İptal',color:'text-red-400',bg:'bg-red-500/20'},
   };
-  const roleLabel:Record<string,string>={admin:'🔑 Admin',kasiyer:'🛒 Kasiyer',depo:'📦 Depo'};
+  const roleLabel=(staff:any)=>{
+    if(staff?.role==='admin') return '🔑 Admin (Tam Yetki)';
+    const cnt=(staff?.permissions||[]).length;
+    return `⚙️ Özel (${cnt} yetki)`;
+  };
   const canDo=(action:string)=>{
     if(!currentStaff)return false;
     if(currentStaff.role==='admin')return true;
-    const restricted=['personel','rapor.kdv','rapor.personel'];
-    if(currentStaff.role==='kasiyer')return!restricted.includes(action);
-    if(currentStaff.role==='depo')return['stok','urun'].some(a=>action.startsWith(a));
-    return false;
+    const perms:string[]=currentStaff.permissions||[];
+    // Rapor sekmesi — sadece izin varsa göster
+    if(action.startsWith('rapor.'))return perms.includes(action.replace('rapor.','reports.'));
+    // Stok alt sayfaları
+    if(action.startsWith('stock'))return perms.includes(action)||perms.includes('stock');
+    return perms.includes(action);
   };
 
   // ── Product CRUD ──────────────────────────────────────────────────────
@@ -550,7 +629,77 @@ export default function App(){
   const handleAddCategory=async(e:React.FormEvent)=>{e.preventDefault();if(!newCatName.trim())return;await addDoc(collection(db,'categories'),{name:newCatName.trim(),color:newCatColor});setNewCatName('');};
   const handleAddCustCategory=async(e:React.FormEvent)=>{e.preventDefault();if(!newCustCatName.trim())return;await addDoc(collection(db,'custCategories'),{name:newCustCatName.trim(),color:newCustCatColor});setNewCustCatName('');};
   const handleAddExpense=async(e:React.FormEvent)=>{e.preventDefault();await addDoc(collection(db,'expenses'),{name:expName,amount:parseFloat(expAmount)||0,date:new Date().toISOString()});await logAction('GİDER',`${expName} — ₺${expAmount}`,parseFloat(expAmount)||0);setExpName('');setExpAmount('');};
-  const handleAddStaff=async(e:React.FormEvent)=>{e.preventDefault();if(!newStaffName||!newStaffPin)return;await addDoc(collection(db,'staff'),{name:newStaffName,role:newStaffRole,pin:newStaffPin,createdAt:new Date().toLocaleString('tr-TR')});await logAction('PERSONEL_EKLE',`${newStaffName} (${newStaffRole}) eklendi`);setNewStaffName('');setNewStaffPin('');};
+
+  // ── Teklif CRUD ───────────────────────────────────────────────────────
+  const qRaw=quoteDraft.reduce((t:number,i:any)=>t+((i.grossPrice||0)*i.qty),0);
+  const qDiscountVal=parseFloat(quoteDiscount)||0;
+  const qDiscountAmt=qRaw*(qDiscountVal/100);
+  const qTotal=qRaw-qDiscountAmt;
+
+  const addToQuote=(p:any)=>setQuoteDraft(prev=>{const ex=prev.find((i:any)=>i.id===p.id);if(ex)return prev.map((i:any)=>i.id===p.id?{...i,qty:i.qty+1}:i);return[...prev,{...p,qty:1}];});
+
+  const handleSaveQuote=async()=>{
+    if(quoteDraft.length===0)return alert('Sepet boş!');
+    const ac=customers.find((c:any)=>c.id===quoteCustomer);
+    const doc_=await addDoc(collection(db,'quotes'),{
+      items:quoteDraft,subTotal:qRaw,discountPct:qDiscountVal,discountAmount:qDiscountAmt,total:qTotal,
+      customerName:ac?ac.name:'',customerTax:ac?ac.taxNum:'-',customerId:quoteCustomer||'',
+      note:quoteNote,status:'beklemede',
+      createdAt:new Date().toLocaleString('tr-TR'),
+      staffId:currentStaff?.id,staffName:currentStaff?.name,
+    });
+    await logAction('TEKLİF_OLUŞTUR',`${ac?ac.name:'Müşterisiz'} — ₺${qTotal.toFixed(2)}`,qTotal);
+    setQuoteDraft([]);setQuoteCustomer('');setQuoteDiscount('');setQuoteNote('');
+    alert('Teklif kaydedildi!');
+  };
+  const handleQuoteStatus=async(qId:string,status:string)=>{
+    await updateDoc(doc(db,'quotes',qId),{status,updatedAt:new Date().toLocaleString('tr-TR')});
+  };
+  const handleQuoteToSale=async(q:any)=>{
+    if(!window.confirm('Bu teklifi satışa dönüştürmek istiyor musunuz?'))return;
+    const ac=customers.find((c:any)=>c.id===q.customerId);
+    const sd={items:q.items,subTotal:q.subTotal,discountPct:q.discountPct,discountAmount:q.discountAmount,totalCost:0,total:q.total,method:q.customerId?'Veresiye':'Nakit',customerName:q.customerName||'Perakende Müşteri',customerTax:q.customerTax||'-',date:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name,fromQuoteId:q.id};
+    await addDoc(collection(db,'sales'),sd);
+    if(ac&&q.customerId)await updateDoc(doc(db,'customers',q.customerId),{balance:(ac.balance||0)+q.total});
+    for(const item of(q.items||[])){const p=products.find(p=>p.id===item.id);if(p&&typeof p.stock==='number')await updateDoc(doc(db,'products',p.id),{stock:Math.max(0,(p.stock||0)-item.qty)});}
+    await updateDoc(doc(db,'quotes',q.id),{status:'onaylandi',convertedToSale:true});
+    await logAction('TEKLİF_SATIŞA_ÇEVİR',`${q.customerName} — ₺${q.total.toFixed(2)}`,q.total);
+  };
+
+  // ── Fiyat Bölme ───────────────────────────────────────────────────────
+  const handleSplitSale=async()=>{
+    const nakit=parseFloat(splitNakit)||0;
+    const kart=parseFloat(splitKart)||0;
+    if(Math.abs(nakit+kart-finalTotal)>0.01)return alert(`Nakit + Kart = ₺${(nakit+kart).toFixed(2)} — Toplam ₺${finalTotal.toFixed(2)} ile eşleşmiyor!`);
+    if(cart.length===0)return;
+    const ac=customers.find((c:any)=>c.id===cartCustomer);
+    const baseData={items:cart,subTotal:rawTotal,discountPct:discountVal,discountAmount,totalCost:totalCostCart,customerName:ac?ac.name:'Perakende Müşteri',customerTax:ac?ac.taxNum:'-',date:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name,isSplit:true};
+    if(nakit>0)await addDoc(collection(db,'sales'),{...baseData,total:nakit,method:'Nakit',splitGroup:Date.now()});
+    if(kart>0)await addDoc(collection(db,'sales'),{...baseData,total:kart,method:'Kart',splitGroup:Date.now()});
+    for(const item of cart){const p=products.find(p=>p.id===item.id);if(p&&typeof p.stock==='number')await updateDoc(doc(db,'products',p.id),{stock:Math.max(0,(p.stock||0)-item.qty)});}
+    await logAction('BÖLÜNMÜŞ_SATIŞ',`Nakit:₺${nakit} + Kart:₺${kart}`,finalTotal);
+    setLastSale({id:`SPLIT-${Date.now()}`,items:cart,total:finalTotal,method:`Nakit ₺${nakit} + Kart ₺${kart}`,customerName:ac?ac.name:'Perakende Müşteri',date:new Date().toLocaleString('tr-TR'),staffName:currentStaff?.name});
+    setCart([]);setCartCustomer('');setDiscountPct('');setSplitModal(false);setSplitNakit('');setSplitKart('');
+  };
+  const handleAddStaff=async(e:React.FormEvent)=>{
+    e.preventDefault();if(!newStaffName||!newStaffPin)return;
+    await addDoc(collection(db,'staff'),{name:newStaffName,role:newStaffRole,pin:newStaffPin,permissions:newStaffRole==='admin'?[]:newStaffPerms,createdAt:new Date().toLocaleString('tr-TR')});
+    await logAction('PERSONEL_EKLE',`${newStaffName} eklendi (${newStaffPerms.length} yetki)`);
+    setNewStaffName('');setNewStaffPin('');setNewStaffPerms(['pos','orders','returns','customers','customers.tahsilat']);
+  };
+  const handleUpdateStaff=async(e:React.FormEvent)=>{
+    e.preventDefault();if(!editingStaff)return;
+    const upd:any={permissions:editingStaff.role==='admin'?[]:editStaffPerms};
+    if(editStaffPin)upd.pin=editStaffPin;
+    await updateDoc(doc(db,'staff',editingStaff.id),upd);
+    await logAction('PERSONEL_GÜNCELLE',`${editingStaff.name} yetkileri güncellendi`);
+    // Giriş yapmış personel buysa currentStaff'ı güncelle
+    if(editingStaff.id===currentStaff?.id)setCurrentStaff((prev:any)=>({...prev,...upd}));
+    setEditingStaff(null);setEditStaffPin('');
+  };
+  const togglePerm=(perms:string[],key:string,setter:(p:string[])=>void)=>{
+    setter(perms.includes(key)?perms.filter(p=>p!==key):[...perms,key]);
+  };
 
   const dlCSV=(d:any[][],h:string[],f:string)=>{const c='data:text/csv;charset=utf-8,\uFEFF'+[h.join(','),...d.map(r=>r.join(','))].join('\n');const a=document.createElement('a');a.href=encodeURI(c);a.download=f;a.click();};
   const exportProducts=()=>dlCSV(products.map(p=>[(p.name||'').replace(/,/g,''),p.barcode||'',p.unit||'',p.category||'',p.costPrice||0,p.grossPrice||0,p.stock||0]),['Urun','Barkod','Birim','Kategori','Alis','Satis','Stok'],'urunler.csv');
@@ -644,16 +793,17 @@ export default function App(){
         <div className="px-4 py-2.5 border-b border-zinc-800 flex items-center justify-between bg-zinc-950/30">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 bg-emerald-500/20 rounded-lg flex items-center justify-center"><UserCheck size={14} className="text-emerald-400"/></div>
-            <div><p className="text-white text-xs font-black">{currentStaff.name}</p><p className="text-zinc-600 text-[10px]">{roleLabel[currentStaff.role]||currentStaff.role}</p></div>
+            <div><p className="text-white text-xs font-black">{currentStaff.name}</p><p className="text-zinc-600 text-[10px]">{roleLabel(currentStaff)}</p></div>
           </div>
           <button onClick={()=>{logAction('ÇIKIŞ','Sistemden çıkış yapıldı');setCurrentStaff(null);}} className="text-zinc-600 hover:text-red-400 transition-colors" title="Çıkış"><LogOut size={15}/></button>
         </div>
 
         <nav className="p-3 flex-1 overflow-y-auto space-y-0.5">
-          {[{p:'pos',icon:<ShoppingCart size={16}/>,label:'Hızlı Satış'},{p:'orders',icon:<ShoppingBag size={16}/>,label:'Siparişli Satışlar',badge:orders.filter(o=>o.status==='bekliyor'||o.status==='hazirlaniyor').length||null},{p:'returns',icon:<RefreshCw size={16}/>,label:'İade / Değişim'},{p:'purchases',icon:<ArrowDownToLine size={16}/>,label:'Alış Faturaları'}].map(t=>(
+          {[{p:'pos',icon:<ShoppingCart size={16}/>,label:'Hızlı Satış',perm:'pos'},{p:'orders',icon:<ShoppingBag size={16}/>,label:'Siparişli Satışlar',perm:'orders',badge:orders.filter(o=>o.status==='bekliyor'||o.status==='hazirlaniyor').length||null},{p:'quotes',icon:<FileEdit size={16}/>,label:'Teklifler',perm:'pos',badge2:quotes.filter(q=>q.status==='beklemede').length||null},{p:'returns',icon:<RefreshCw size={16}/>,label:'İade / Değişim',perm:'returns'},{p:'purchases',icon:<ArrowDownToLine size={16}/>,label:'Alış Faturaları',perm:'purchases'}].filter(t=>canDo(t.perm)).map(t=>(
             <button key={t.p} onClick={()=>setActivePage(t.p)} className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all text-sm font-medium ${activePage===t.p?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`}>
               {t.icon}<span className="flex-1 text-left">{t.label}</span>
               {(t as any).badge&&<span className="bg-orange-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">{(t as any).badge}</span>}
+              {(t as any).badge2&&<span className="bg-purple-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">{(t as any).badge2}</span>}
             </button>
           ))}
 
@@ -669,11 +819,11 @@ export default function App(){
               ))}</div>}
           </div>
 
-          <button onClick={()=>setActivePage('customers')} className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium mt-1 ${activePage==='customers'||activePage==='customers.categories'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`}><Users size={16}/><span className="flex-1 text-left">Müşteri & Tedarikçi</span></button>
+          {canDo('customers')&&<button onClick={()=>setActivePage('customers')} className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium mt-1 ${activePage==='customers'||activePage==='customers.categories'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`}><Users size={16}/><span className="flex-1 text-left">Müşteri & Tedarikçi</span></button>}
           <div className="border-t border-zinc-800/60 my-2"/>
-          <button onClick={()=>setActivePage('reports')} className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium ${activePage==='reports'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`}><BarChart3 size={16}/><span>Rapor & Analiz</span></button>
+          {(canDo('reports.genel')||canDo('reports.gunSonu')||canDo('reports.kdv')||currentStaff?.role==='admin')&&<button onClick={()=>setActivePage('reports')} className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium ${activePage==='reports'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`}><BarChart3 size={16}/><span>Rapor & Analiz</span></button>}
           {currentStaff.role==='admin'&&<button onClick={()=>setActivePage('personel')} className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium ${activePage==='personel'||activePage==='personel.logs'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`}><UserCog size={16}/><span>Personel</span></button>}
-          <button onClick={()=>setActivePage('receipt')} className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium ${activePage==='receipt'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`}><Palette size={16}/><span>Fiş Tasarımı</span></button>
+          {(canDo('receipt')||currentStaff?.role==='admin')&&<button onClick={()=>setActivePage('receipt')} className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium ${activePage==='receipt'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`}><Palette size={16}/><span>Fiş Tasarımı</span></button>}
         </nav>
       </aside>
 
@@ -740,6 +890,14 @@ export default function App(){
                       <button onClick={()=>finishSale('Kart')} className="bg-zinc-800 hover:bg-zinc-700 py-3.5 rounded-2xl font-bold border border-zinc-700 active:scale-95 text-sm">KART</button>
                     </div>
                     <button onClick={()=>setIsVeresiyeOpen(true)} className="w-full bg-emerald-500 py-4 rounded-2xl font-black text-zinc-950 hover:bg-emerald-400 active:scale-95 shadow-lg shadow-emerald-500/20 text-sm">VERESİYE YAZ</button>
+                    <div className="flex gap-2 mt-2">
+                      <button onClick={()=>{setSplitNakit('');setSplitKart('');setSplitModal(true);}} className="flex-1 bg-zinc-800 hover:bg-zinc-700 py-3 rounded-2xl font-bold border border-zinc-700 text-xs flex items-center justify-center gap-1.5 text-zinc-300 active:scale-95"><SplitSquareHorizontal size={15}/> Fiyat Böl</button>
+                      <button onClick={()=>{setQuoteDraft(cart.length>0?[...cart]:[]);setActivePage('quotes');}} className="flex-1 bg-purple-600/20 hover:bg-purple-600/30 py-3 rounded-2xl font-bold border border-purple-600/40 text-xs flex items-center justify-center gap-1.5 text-purple-400 active:scale-95"><FileEdit size={15}/> Teklif Yap</button>
+                    </div>
+                    <div className="flex gap-2 mt-2">
+                      <button onClick={()=>{setSplitNakit('');setSplitKart('');setSplitModal(true);}} className="flex-1 bg-zinc-800 hover:bg-zinc-700 py-3 rounded-2xl font-bold border border-zinc-700 text-xs flex items-center justify-center gap-1.5 text-zinc-300 active:scale-95"><SplitSquareHorizontal size={15}/> Fiyat Böl</button>
+                      <button onClick={()=>{setQuoteDraft(cart.length>0?[...cart]:[]);setActivePage('quotes');}} className="flex-1 bg-purple-600/20 hover:bg-purple-600/30 py-3 rounded-2xl font-bold border border-purple-600/40 text-xs flex items-center justify-center gap-1.5 text-purple-400 active:scale-95"><FileEdit size={15}/> Teklif Yap</button>
+                    </div>
                   </>
                 )}
               </div>
@@ -824,6 +982,126 @@ export default function App(){
         )}
 
         {/* ═══ İADE / DEĞİŞİM ══════════════════════════════════════════ */}
+
+        {/* ═══ TEKLİFLER ══════════════════════════════════════════════ */}
+        {activePage==='quotes'&&(
+          <div className="flex w-full h-full overflow-hidden">
+            {/* Sol: Teklif oluştur (sepet) */}
+            <div className="w-[420px] bg-zinc-900 border-r border-zinc-800 flex flex-col shrink-0">
+              <div className="p-5 border-b border-zinc-800 flex items-center justify-between shrink-0">
+                <h2 className="text-lg font-black flex items-center gap-2"><FileEdit className="text-purple-400" size={18}/> Teklif Oluştur</h2>
+                <span className="text-zinc-600 text-xs">{quoteDraft.length} ürün</span>
+              </div>
+              {/* Ürün arama */}
+              <div className="p-3 border-b border-zinc-800 shrink-0">
+                <div className="relative"><Search className="absolute left-3 top-2.5 text-zinc-500" size={14}/><input value={quoteSearch} onChange={e=>setQuoteSearch(e.target.value)} placeholder="Ürün ekle..." className="w-full bg-zinc-950 border border-zinc-800 pl-9 pr-4 py-2.5 rounded-xl outline-none focus:border-purple-500 text-sm"/></div>
+                {quoteSearch&&(
+                  <div className="absolute z-50 bg-zinc-800 border border-zinc-700 rounded-xl mt-1 max-h-48 overflow-y-auto shadow-xl w-[390px]">
+                    {products.filter(p=>(p.name||'').toLowerCase().includes(quoteSearch.toLowerCase())).slice(0,8).map(p=>(
+                      <button key={p.id} onClick={()=>{addToQuote(p);setQuoteSearch('');}} className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-zinc-700 text-left transition-all">
+                        <span className="text-white font-medium text-sm">{p.name}</span>
+                        <span className="text-purple-400 font-black ml-2">₺{p.grossPrice}</span>
+                      </button>
+                    ))}
+                    {products.filter(p=>(p.name||'').toLowerCase().includes(quoteSearch.toLowerCase())).length===0&&<p className="text-zinc-600 text-sm text-center py-3">Ürün bulunamadı</p>}
+                  </div>
+                )}
+              </div>
+              {/* Teklif sepeti */}
+              <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                {quoteDraft.length===0&&<p className="text-zinc-600 text-center py-8 text-sm font-bold">Ürün eklemek için arama yapın veya POS sepetini buraya taşıyın.</p>}
+                {quoteDraft.map((item:any)=>(
+                  <div key={item.id} className="bg-zinc-950 p-3 rounded-2xl border border-zinc-800 flex justify-between items-center">
+                    <div className="flex-1 min-w-0"><div className="text-sm font-bold text-zinc-300 truncate">{item.name}</div><div className="text-purple-400 font-black text-sm">₺{((item.grossPrice||0)*item.qty).toFixed(2)}</div></div>
+                    <div className="flex items-center gap-2 bg-zinc-900 p-1.5 rounded-xl border border-zinc-800 mx-2">
+                      <button onClick={()=>setQuoteDraft(quoteDraft.map((i:any)=>i.id===item.id?{...i,qty:Math.max(1,i.qty-1)}:i))} className="text-zinc-500 hover:text-purple-400"><MinusCircle size={18}/></button>
+                      <span className="w-5 text-center font-black text-sm">{item.qty}</span>
+                      <button onClick={()=>setQuoteDraft(quoteDraft.map((i:any)=>i.id===item.id?{...i,qty:i.qty+1}:i))} className="text-zinc-500 hover:text-purple-400"><PlusCircle size={18}/></button>
+                    </div>
+                    <button onClick={()=>setQuoteDraft(quoteDraft.filter((i:any)=>i.id!==item.id))} className="text-red-900 hover:text-red-500"><Trash2 size={14}/></button>
+                  </div>
+                ))}
+              </div>
+              {/* Teklif detayları + kaydet */}
+              <div className="p-4 bg-zinc-950 border-t border-zinc-800 space-y-3">
+                <select value={quoteCustomer} onChange={e=>setQuoteCustomer(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 p-2.5 rounded-xl text-white outline-none text-sm font-bold"><option value="">-- Müşteri Seç (isteğe bağlı) --</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
+                <div className="flex gap-2">
+                  <div className="flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2.5 flex-1"><Percent size={13} className="text-zinc-500"/><span className="text-zinc-500 text-xs">İskonto:</span><input type="number" min="0" max="100" value={quoteDiscount} onChange={e=>setQuoteDiscount(e.target.value)} placeholder="0" className="w-12 bg-transparent text-white outline-none font-bold text-sm text-center"/><span className="text-zinc-500 text-xs">%</span></div>
+                  <input value={quoteNote} onChange={e=>setQuoteNote(e.target.value)} placeholder="Not / açıklama..." className="flex-1 bg-zinc-900 border border-zinc-700 text-white px-3 py-2.5 rounded-xl text-sm outline-none"/>
+                </div>
+                <div className="flex justify-between items-center">
+                  {qDiscountAmt>0&&<span className="text-zinc-500 text-xs">İndirim: -₺{qDiscountAmt.toFixed(2)}</span>}
+                  <span className="text-2xl font-black text-white ml-auto">₺{qTotal.toFixed(2)}</span>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={()=>{setPrintQuote({id:`QT-${Date.now()}`,items:quoteDraft,subTotal:qRaw,discountAmount:qDiscountAmt,discountPct:qDiscountVal,total:qTotal,customerName:customers.find(c=>c.id===quoteCustomer)?.name||'',date:new Date().toLocaleString('tr-TR'),note:quoteNote,staffName:currentStaff?.name});setTimeout(()=>window.print(),100);}} className="flex-1 bg-zinc-800 hover:bg-zinc-700 py-3 rounded-xl font-bold border border-zinc-700 text-sm flex items-center justify-center gap-1.5 text-zinc-300"><Printer size={15}/> Yazdır</button>
+                  <button onClick={handleSaveQuote} className="flex-1 bg-purple-600 hover:bg-purple-500 text-white py-3 rounded-xl font-black shadow-lg shadow-purple-600/20 text-sm flex items-center justify-center gap-1.5"><Save size={15}/> Teklif Kaydet</button>
+                </div>
+              </div>
+            </div>
+
+            {/* Sağ: Teklif listesi */}
+            <div className="flex-1 overflow-y-auto p-7">
+              <div className="flex items-center justify-between mb-5">
+                <h2 className="text-2xl font-black flex items-center gap-2"><Handshake className="text-purple-400"/> Teklifler</h2>
+                <div className="flex gap-2">
+                  {(['all','beklemede','onaylandi','reddedildi'] as const).map(s=>{
+                    const cnt=s==='all'?quotes.length:quotes.filter(q=>q.status===s).length;
+                    const cls=s==='beklemede'?'text-orange-400 bg-orange-500/20 border-orange-500/30':s==='onaylandi'?'text-emerald-400 bg-emerald-500/20 border-emerald-500/30':s==='reddedildi'?'text-red-400 bg-red-500/20 border-red-500/30':'text-zinc-400 bg-zinc-800 border-zinc-700';
+                    return <button key={s} onClick={()=>setQuoteFilter(s)} className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all ${quoteFilter===s?cls:'bg-zinc-900 border-zinc-800 text-zinc-600'}`}>{s==='all'?'Tümü':s==='beklemede'?`Beklemede (${cnt})`:s==='onaylandi'?`Onaylı (${cnt})`:`Red (${cnt})`}</button>;
+                  })}
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                {quotes.filter(q=>quoteFilter==='all'||q.status===quoteFilter).slice().reverse().map((q:any)=>(
+                  <div key={q.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden hover:border-zinc-700 transition-all">
+                    <div className="flex items-center gap-4 p-5">
+                      <div className="bg-purple-600/20 border border-purple-600/30 px-3 py-2 rounded-xl text-center min-w-[72px] shrink-0">
+                        <p className="text-purple-400 text-[9px] font-bold uppercase">Teklif</p>
+                        <p className="text-white font-black text-sm">#{q.id?.slice(-5).toUpperCase()}</p>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-black text-white">{q.customerName||'Müşteri belirtilmemiş'}</span>
+                          <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${q.status==='beklemede'?'bg-orange-500/20 text-orange-400':q.status==='onaylandi'?'bg-emerald-500/20 text-emerald-400':'bg-red-500/20 text-red-400'}`}>
+                            {q.status==='beklemede'?'⏳ Beklemede':q.status==='onaylandi'?'✅ Onaylandı':'❌ Reddedildi'}
+                          </span>
+                          {q.convertedToSale&&<span className="text-[10px] bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-full font-bold">Satışa Dönüştürüldü</span>}
+                        </div>
+                        <div className="text-zinc-500 text-xs mt-0.5">{q.createdAt}{q.note&&<span className="text-zinc-600"> · {q.note}</span>}{q.staffName&&<span className="text-zinc-700"> · {q.staffName}</span>}</div>
+                      </div>
+                      <div className="text-right mr-2 shrink-0">
+                        <div className="text-2xl font-black text-white">₺{(q.total||0).toFixed(2)}</div>
+                        {q.discountAmount>0&&<div className="text-zinc-500 text-xs">İndirim: -₺{q.discountAmount.toFixed(2)}</div>}
+                        <div className="text-zinc-600 text-xs">{(q.items||[]).length} kalem</div>
+                      </div>
+                      <div className="flex flex-col gap-2 shrink-0">
+                        {q.status==='beklemede'&&!q.convertedToSale&&(
+                          <>
+                            <button onClick={()=>handleQuoteToSale(q)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5"><CheckCircle2 size={13}/> Satışa Çevir</button>
+                            <button onClick={()=>handleQuoteStatus(q.id,'reddedildi')} className="bg-zinc-800 hover:bg-red-600 text-zinc-400 hover:text-white px-3 py-2 rounded-xl text-xs font-bold border border-zinc-700 flex items-center gap-1.5"><X size={12}/> Reddet</button>
+                          </>
+                        )}
+                        <button onClick={()=>{setPrintQuote({...q});setTimeout(()=>window.print(),100);}} className="bg-zinc-800 hover:bg-white hover:text-zinc-950 text-zinc-400 px-3 py-2 rounded-xl text-xs font-bold border border-zinc-700 flex items-center gap-1.5"><Printer size={12}/> Yazdır</button>
+                      </div>
+                    </div>
+                    <div className="border-t border-zinc-800/50 px-5 pb-3">
+                      <div className="flex flex-wrap gap-2 mt-2.5">
+                        {(q.items||[]).map((item:any,i:number)=>(
+                          <span key={i} className="text-xs bg-zinc-800 text-zinc-300 px-3 py-1.5 rounded-xl font-medium">{item.name} <span className="font-black text-white">×{item.qty}</span> <span className="text-purple-400 font-black">₺{((item.grossPrice||0)*item.qty).toFixed(2)}</span></span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {quotes.filter(q=>quoteFilter==='all'||q.status===quoteFilter).length===0&&<div className="text-center text-zinc-600 py-16 font-bold text-lg">Teklif bulunamadı.</div>}
+              </div>
+            </div>
+          </div>
+        )}
+
+
         {activePage==='returns'&&(
           <div className="p-7 w-full overflow-y-auto">
             <h2 className="text-3xl font-black flex items-center gap-3 mb-6"><RefreshCw className="text-red-400"/> İade & Değişim</h2>
@@ -1215,7 +1493,7 @@ export default function App(){
             </div>
             <div className="flex gap-2 mb-6 bg-zinc-900 p-1.5 rounded-2xl border border-zinc-800 w-fit">
               {([['genel','Genel'],['gunSonu','Gün Sonu'],['kdv','KDV'],['personel','Personel']] as const).map(([tab,label])=>(
-                (!canDo(`rapor.${tab}`)&&(tab==='personel'))?null:
+                (tab==='personel'&&currentStaff?.role!=='admin')?null:
                 <button key={tab} onClick={()=>setReportTab(tab)} className={`px-4 py-2.5 rounded-xl font-bold text-sm transition-all ${reportTab===tab?'bg-emerald-500 text-zinc-950':'text-zinc-500 hover:text-white'}`}>{label}</button>
               ))}
             </div>
@@ -1296,7 +1574,7 @@ export default function App(){
               </div>
             )}
 
-            {reportTab==='personel'&&currentStaff.role==='admin'&&(
+            {reportTab==='personel'&&currentStaff?.role==='admin'&&(
               <div>
                 <div className="flex items-center gap-3 mb-5 flex-wrap">
                   <label className="text-zinc-400 font-bold text-sm">Personel:</label>
@@ -1316,7 +1594,7 @@ export default function App(){
                       .map((log,i)=>(
                       <tr key={i} className="hover:bg-zinc-800/30">
                         <td className="p-4 font-bold text-white text-sm">{log.staffName}</td>
-                        <td className="p-4"><span className="text-xs bg-zinc-800 text-zinc-400 px-2 py-1 rounded-lg">{roleLabel[log.role]||log.role}</span></td>
+                        <td className="p-4"><span className="text-xs bg-zinc-800 text-zinc-400 px-2 py-1 rounded-lg">{log.role==='admin'?'🔑 Admin':'⚙️ Özel'}</span></td>
                         <td className="p-4"><span className={`text-xs font-bold px-2 py-1 rounded-lg ${log.action.includes('SATIŞ')?'bg-emerald-500/20 text-emerald-400':log.action.includes('GİRİŞ')||log.action.includes('ÇIKIŞ')?'bg-blue-500/20 text-blue-400':log.action.includes('İADE')?'bg-red-500/20 text-red-400':'bg-zinc-700 text-zinc-400'}`}>{log.action}</span></td>
                         <td className="p-4 text-zinc-400 text-xs max-w-xs truncate">{log.detail}</td>
                         <td className="p-4 text-right font-bold text-zinc-300">{log.amount>0?`₺${log.amount.toFixed(2)}`:'-'}</td>
@@ -1332,52 +1610,167 @@ export default function App(){
         )}
 
         {/* ═══ PERSONEL YÖNETİMİ ════════════════════════════════════════ */}
-        {activePage==='personel'&&currentStaff.role==='admin'&&(
+        {activePage==='personel'&&currentStaff?.role==='admin'&&(
           <div className="p-7 w-full overflow-y-auto">
             <h2 className="text-3xl font-black flex items-center gap-3 mb-6"><UserCog className="text-emerald-500"/> Personel Yönetimi</h2>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+
+              {/* Yeni Personel Formu */}
               <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl">
-                <h3 className="font-black text-lg mb-5 border-b border-zinc-800 pb-3 flex items-center gap-2"><Plus size={17} className="text-emerald-500"/> Yeni Personel</h3>
-                <form onSubmit={handleAddStaff} className="space-y-4">
+                <h3 className="font-black text-lg mb-5 border-b border-zinc-800 pb-3 flex items-center gap-2"><Plus size={17} className="text-emerald-500"/> Yeni Personel Ekle</h3>
+                <form onSubmit={handleAddStaff} className="space-y-5">
                   <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Personel Adı</label><input required value={newStaffName} onChange={e=>setNewStaffName(e.target.value)} className="w-full bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-emerald-500 text-sm" placeholder="Ad Soyad"/></div>
-                  <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">PIN Kodu (4-6 hane)</label><input required type="password" maxLength={6} value={newStaffPin} onChange={e=>setNewStaffPin(e.target.value)} className="w-full bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-emerald-500 text-sm text-center tracking-widest font-black text-lg" placeholder="••••"/></div>
+                  <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">PIN Kodu (4-6 hane)</label><input required type="password" maxLength={6} value={newStaffPin} onChange={e=>setNewStaffPin(e.target.value)} className="w-full bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-emerald-500 text-sm text-center tracking-widest font-black text-xl" placeholder="••••"/></div>
                   <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-zinc-500 uppercase">Rol & Yetki</label>
-                    <div className="grid grid-cols-3 gap-2">
-                      {([['admin','🔑 Admin','Tüm yetkiler'],['kasiyer','🛒 Kasiyer','Satış + Cari'],['depo','📦 Depo','Stok işlemleri']] as const).map(([r,label,desc])=>(
-                        <button key={r} type="button" onClick={()=>setNewStaffRole(r)} className={`p-3 rounded-xl text-left border transition-all ${newStaffRole===r?'bg-emerald-500/20 border-emerald-500/50':'bg-zinc-800 border-zinc-700 hover:border-zinc-600'}`}>
-                          <div className="font-black text-sm text-white">{label}</div>
-                          <div className="text-zinc-500 text-[10px] mt-0.5">{desc}</div>
-                        </button>
-                      ))}
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-xs font-bold text-zinc-500 uppercase">Yetkiler</label>
+                      <div className="flex gap-2">
+                        <button type="button" onClick={()=>setNewStaffRole('admin')} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${newStaffRole==='admin'?'bg-yellow-500/20 border-yellow-500/50 text-yellow-400':'bg-zinc-800 border-zinc-700 text-zinc-500 hover:border-zinc-500'}`}>🔑 Admin (Tam Yetki)</button>
+                        <button type="button" onClick={()=>setNewStaffRole('ozel')} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${newStaffRole==='ozel'?'bg-emerald-500/20 border-emerald-500/50 text-emerald-400':'bg-zinc-800 border-zinc-700 text-zinc-500 hover:border-zinc-500'}`}>⚙️ Özel Yetki</button>
+                      </div>
                     </div>
+                    {newStaffRole==='admin'?(
+                      <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-2xl p-4 text-center"><p className="text-yellow-400 font-bold text-sm">🔑 Admin — tüm sayfalara ve özelliklere erişim</p><p className="text-zinc-600 text-xs mt-1">Yetki seçimine gerek yok</p></div>
+                    ):(
+                      <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4 space-y-4">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-zinc-400 text-xs font-bold">{newStaffPerms.length} yetki seçildi</span>
+                          <div className="flex gap-2">
+                            <button type="button" onClick={()=>setNewStaffPerms(ALL_PERMISSIONS.map(p=>p.key))} className="text-xs text-emerald-400 hover:text-emerald-300 font-bold">Tümünü Seç</button>
+                            <span className="text-zinc-700">|</span>
+                            <button type="button" onClick={()=>setNewStaffPerms([])} className="text-xs text-red-400 hover:text-red-300 font-bold">Temizle</button>
+                          </div>
+                        </div>
+                        {['Satış','Stok','Cari','Rapor','Ayarlar'].map(group=>(
+                          <div key={group}>
+                            <p className="text-zinc-600 text-[10px] font-black uppercase tracking-widest mb-2">{group}</p>
+                            <div className="space-y-1.5">
+                              {ALL_PERMISSIONS.filter(p=>p.group===group).map(perm=>(
+                                <label key={perm.key} className={`flex items-center gap-3 p-2.5 rounded-xl cursor-pointer transition-all ${newStaffPerms.includes(perm.key)?'bg-emerald-500/10 border border-emerald-500/30':'bg-zinc-900 border border-zinc-800 hover:border-zinc-600'}`}>
+                                  <div className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center shrink-0 transition-all ${newStaffPerms.includes(perm.key)?'bg-emerald-500 border-emerald-500':'border-zinc-600'}`}
+                                    onClick={()=>togglePerm(newStaffPerms,perm.key,setNewStaffPerms)}>
+                                    {newStaffPerms.includes(perm.key)&&<CheckCircle size={12} className="text-zinc-950"/>}
+                                  </div>
+                                  <span className="text-sm">{perm.icon}</span>
+                                  <span className={`text-sm font-medium flex-1 ${newStaffPerms.includes(perm.key)?'text-white':'text-zinc-400'}`}>{perm.label}</span>
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <button type="submit" className="w-full bg-emerald-500 text-zinc-950 font-black py-3.5 rounded-xl flex items-center justify-center gap-2 text-sm shadow-lg shadow-emerald-500/20"><UserPlus size={16}/> Personel Ekle</button>
                 </form>
               </div>
+
+              {/* Mevcut Personel Listesi */}
               <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl">
                 <h3 className="font-black text-lg mb-5 border-b border-zinc-800 pb-3 flex items-center gap-2"><Users size={17} className="text-emerald-500"/> Mevcut Personel</h3>
                 <div className="space-y-3">
                   {staffList.map(staff=>(
-                    <div key={staff.id} className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-base ${staff.role==='admin'?'bg-yellow-500/20 text-yellow-400':staff.role==='kasiyer'?'bg-emerald-500/20 text-emerald-400':'bg-blue-500/20 text-blue-400'}`}>
-                          {staff.name.charAt(0).toUpperCase()}
+                    <div key={staff.id} className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-base ${staff.role==='admin'?'bg-yellow-500/20 text-yellow-400':'bg-emerald-500/20 text-emerald-400'}`}>
+                            {staff.name.charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <p className="font-black text-white text-sm">{staff.name}</p>
+                              {staff.id===currentStaff.id&&<span className="text-emerald-400 text-[10px] font-bold bg-emerald-500/20 px-1.5 py-0.5 rounded">SEN</span>}
+                            </div>
+                            <p className="text-zinc-500 text-xs mt-0.5">{roleLabel(staff)}</p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="font-black text-white text-sm">{staff.name}</p>
-                          <p className="text-zinc-500 text-xs">{roleLabel[staff.role]||staff.role}</p>
+                        <div className="flex items-center gap-2">
+                          <button onClick={()=>{setEditingStaff(staff);setEditStaffPerms(staff.permissions||[]);setEditStaffPin('');}} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-400 px-3 py-2 rounded-xl text-xs font-bold border border-zinc-700 flex items-center gap-1.5"><Pencil size={12}/> Düzenle</button>
+                          {staff.id!==currentStaff.id&&<button onClick={()=>deleteDoc(doc(db,'staff',staff.id))} className="text-zinc-700 hover:text-red-500 p-2 rounded-xl hover:bg-zinc-800"><Trash2 size={14}/></button>}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-zinc-600 text-xs font-mono">PIN: {'•'.repeat((staff.pin||'').length)}</span>
-                        {staff.id!==currentStaff.id&&<button onClick={()=>deleteDoc(doc(db,'staff',staff.id))} className="text-zinc-700 hover:text-red-500 p-1.5 rounded-lg hover:bg-zinc-800"><Trash2 size={14}/></button>}
-                        {staff.id===currentStaff.id&&<span className="text-emerald-400 text-xs font-bold bg-emerald-500/20 px-2 py-1 rounded-lg">Sen</span>}
-                      </div>
+                      {/* Mevcut yetki etiketleri */}
+                      {staff.role!=='admin'&&(staff.permissions||[]).length>0&&(
+                        <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-zinc-800/60">
+                          {(staff.permissions||[]).map((pk:string)=>{
+                            const pDef=ALL_PERMISSIONS.find(p=>p.key===pk);
+                            return pDef?<span key={pk} className="text-[10px] bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded-lg font-medium">{pDef.icon} {pDef.label}</span>:null;
+                          })}
+                        </div>
+                      )}
+                      {staff.role==='admin'&&<div className="mt-2 pt-2 border-t border-zinc-800/60"><span className="text-[10px] text-yellow-500/70 font-bold">🔑 Tüm sayfalara ve özelliklere tam erişim</span></div>}
                     </div>
                   ))}
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* YETKİ DÜZENLEME MODAL */}
+        {editingStaff&&(
+          <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-[300] p-4">
+            <div className="bg-zinc-900 border border-zinc-700 rounded-[32px] w-full max-w-xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-in zoom-in duration-300">
+              <div className="p-6 border-b border-zinc-800 bg-zinc-950/50 flex justify-between items-center shrink-0">
+                <div>
+                  <h3 className="text-xl font-black text-white flex items-center gap-2"><Shield size={18} className="text-emerald-500"/> {editingStaff.name} — Yetki Düzenle</h3>
+                  <p className="text-zinc-500 text-sm mt-0.5">Sayfaları ve özellikleri tek tek aç/kapat</p>
+                </div>
+                <button onClick={()=>setEditingStaff(null)} className="text-zinc-500 hover:text-white bg-zinc-800 p-2 rounded-xl"><X size={20}/></button>
+              </div>
+              <form onSubmit={handleUpdateStaff} className="flex-1 overflow-y-auto">
+                <div className="p-6 space-y-5">
+                  {/* PIN güncelleme */}
+                  <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4">
+                    <label className="text-xs font-bold text-zinc-500 uppercase block mb-2">PIN Değiştir (boş bırakırsan mevcut kalır)</label>
+                    <input type="password" maxLength={6} value={editStaffPin} onChange={e=>setEditStaffPin(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-emerald-500 text-center tracking-widest font-black text-xl" placeholder="Yeni PIN (isteğe bağlı)"/>
+                  </div>
+
+                  {editingStaff.role==='admin'?(
+                    <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-2xl p-5 text-center">
+                      <p className="text-yellow-400 font-black text-lg">🔑 Admin Hesabı</p>
+                      <p className="text-zinc-500 text-sm mt-2">Admin hesaplarının tüm yetkileri her zaman açıktır. Yetki kısıtlaması uygulanamaz.</p>
+                    </div>
+                  ):(
+                    <div className="space-y-5">
+                      <div className="flex items-center justify-between">
+                        <p className="text-zinc-300 font-bold text-sm">{editStaffPerms.length} / {ALL_PERMISSIONS.length} yetki aktif</p>
+                        <div className="flex gap-2">
+                          <button type="button" onClick={()=>setEditStaffPerms(ALL_PERMISSIONS.map(p=>p.key))} className="text-xs text-emerald-400 hover:text-emerald-300 font-bold bg-emerald-500/10 px-3 py-1.5 rounded-lg border border-emerald-500/20">Tümünü Aç</button>
+                          <button type="button" onClick={()=>setEditStaffPerms([])} className="text-xs text-red-400 hover:text-red-300 font-bold bg-red-500/10 px-3 py-1.5 rounded-lg border border-red-500/20">Tümünü Kapat</button>
+                        </div>
+                      </div>
+                      {['Satış','Stok','Cari','Rapor','Ayarlar'].map(group=>(
+                        <div key={group} className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4">
+                          <p className="text-zinc-500 text-[11px] font-black uppercase tracking-widest mb-3 flex items-center gap-2">
+                            <span>{group==='Satış'?'🛒':group==='Stok'?'📦':group==='Cari'?'👥':group==='Rapor'?'📊':'⚙️'}</span> {group}
+                          </p>
+                          <div className="space-y-2">
+                            {ALL_PERMISSIONS.filter(p=>p.group===group).map(perm=>{
+                              const isOn=editStaffPerms.includes(perm.key);
+                              return(
+                                <div key={perm.key} onClick={()=>togglePerm(editStaffPerms,perm.key,setEditStaffPerms)} className={`flex items-center justify-between p-3 rounded-xl cursor-pointer transition-all border ${isOn?'bg-emerald-500/10 border-emerald-500/30':'bg-zinc-900 border-zinc-800 hover:border-zinc-700'}`}>
+                                  <div className="flex items-center gap-3">
+                                    <span className="text-base">{perm.icon}</span>
+                                    <span className={`text-sm font-medium ${isOn?'text-white':'text-zinc-500'}`}>{perm.label}</span>
+                                  </div>
+                                  <div className={`w-11 h-6 rounded-full relative transition-all shrink-0 ${isOn?'bg-emerald-500':'bg-zinc-700'}`}>
+                                    <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${isOn?'left-5':'left-0.5'}`}/>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="p-6 border-t border-zinc-800 shrink-0 flex gap-3">
+                  <button type="button" onClick={()=>setEditingStaff(null)} className="flex-1 bg-zinc-800 text-zinc-400 py-3.5 rounded-xl font-bold border border-zinc-700">İptal</button>
+                  <button type="submit" className="flex-1 bg-emerald-500 text-zinc-950 py-3.5 rounded-xl font-black flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20"><Save size={17}/> Yetkileri Kaydet</button>
+                </div>
+              </form>
             </div>
           </div>
         )}
@@ -1549,8 +1942,117 @@ export default function App(){
       )}
     </div>
 
+
+      {/* ── BÖLÜNMÜŞ ÖDEME MODAL ─────────────────────────────────────── */}
+      {splitModal&&(
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-[250] p-4">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-[32px] w-full max-w-md shadow-2xl overflow-hidden animate-in zoom-in duration-300">
+            <div className="p-6 border-b border-zinc-800 bg-zinc-950/50 flex justify-between items-center">
+              <div>
+                <h3 className="text-xl font-black text-white flex items-center gap-2"><SplitSquareHorizontal size={20} className="text-blue-400"/> Fiyatı Böl</h3>
+                <p className="text-zinc-500 text-sm mt-0.5">Nakit + Kart toplamı <span className="text-white font-black">₺{finalTotal.toFixed(2)}</span> olmalı</p>
+              </div>
+              <button onClick={()=>setSplitModal(false)} className="text-zinc-500 hover:text-white bg-zinc-800 p-2 rounded-xl"><X size={20}/></button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-xs font-black text-emerald-400 uppercase flex items-center gap-1.5">💵 Nakit</label>
+                  <input type="number" step="0.01" value={splitNakit} onChange={e=>{setSplitNakit(e.target.value);setSplitKart((finalTotal-(parseFloat(e.target.value)||0)).toFixed(2));}} placeholder="0.00" className="w-full bg-zinc-950 border border-emerald-800 text-white p-4 rounded-2xl outline-none focus:border-emerald-500 text-2xl font-black text-center"/>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-black text-blue-400 uppercase flex items-center gap-1.5">💳 Kart</label>
+                  <input type="number" step="0.01" value={splitKart} onChange={e=>{setSplitKart(e.target.value);setSplitNakit((finalTotal-(parseFloat(e.target.value)||0)).toFixed(2));}} placeholder="0.00" className="w-full bg-zinc-950 border border-blue-800 text-white p-4 rounded-2xl outline-none focus:border-blue-500 text-2xl font-black text-center"/>
+                </div>
+              </div>
+              {/* Hızlı böl butonları */}
+              <div className="flex gap-2 flex-wrap">
+                {[25,50,75].map(pct=>(
+                  <button key={pct} type="button" onClick={()=>{const n=(finalTotal*pct/100).toFixed(2);setSplitNakit(n);setSplitKart((finalTotal-parseFloat(n)).toFixed(2));}} className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 py-2 rounded-xl text-xs font-bold border border-zinc-700">%{pct} Nakit</button>
+                ))}
+                <button type="button" onClick={()=>{setSplitNakit(finalTotal.toFixed(2));setSplitKart('0');}} className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 py-2 rounded-xl text-xs font-bold border border-zinc-700">Tamamı Nakit</button>
+              </div>
+              {/* Kontrol */}
+              {(()=>{const n=parseFloat(splitNakit)||0;const k=parseFloat(splitKart)||0;const diff=n+k-finalTotal;const ok=Math.abs(diff)<0.01;return(
+                <div className={`rounded-2xl p-4 flex items-center justify-between border ${ok?'bg-emerald-500/10 border-emerald-500/30':'bg-red-500/10 border-red-500/30'}`}>
+                  <span className={`font-bold text-sm ${ok?'text-emerald-400':'text-red-400'}`}>{ok?'✅ Tutar doğru':'❌ Fark: ₺'+Math.abs(diff).toFixed(2)}</span>
+                  <span className="font-black text-white">₺{(n+k).toFixed(2)} / ₺{finalTotal.toFixed(2)}</span>
+                </div>
+              );})()} 
+              <button onClick={handleSplitSale} disabled={Math.abs((parseFloat(splitNakit)||0)+(parseFloat(splitKart)||0)-finalTotal)>0.01} className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white py-4 rounded-2xl font-black flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20 text-sm">
+                <SplitSquareHorizontal size={18}/> ÖDEMEY­İ TAMAMLA (Nakit + Kart)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+    {/* Teklif Yazdırma Şablonu */}
     <div className="hidden print:block">
-      {activePrintData&&<ReceiptTemplate sale={activePrintData} settings={receiptSettings}/>}
+      {printQuote&&!activePrintData?(
+        <div style={{maxWidth:'680px',margin:'0 auto',padding:'28px',background:'white',color:'black',fontFamily:'Arial,sans-serif',fontSize:'1rem',border:'4px solid black',boxSizing:'border-box'}}>
+          {/* Başlık */}
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',paddingBottom:'14px',marginBottom:'14px',borderBottom:'4px solid black'}}>
+            <div>
+              <div style={{fontSize:'2.2rem',fontWeight:900,textTransform:'uppercase',lineHeight:1}}>{receiptSettings.companyName}</div>
+              <div style={{fontSize:'0.72rem',fontWeight:700,color:'#666',marginTop:3}}>SATIŞ TEKLİFİ</div>
+            </div>
+            <div style={{textAlign:'right',fontSize:'0.72rem'}}>
+              <div><strong>TARİH:</strong> {printQuote.date?.split(' ')[0]}</div>
+              <div><strong>TEKLİF NO:</strong> #{printQuote.id?.slice(-6).toUpperCase()}</div>
+              {printQuote.staffName&&<div style={{color:'#888'}}><strong>HAZIRLAYAN:</strong> {printQuote.staffName}</div>}
+            </div>
+          </div>
+          {/* Müşteri */}
+          {printQuote.customerName&&(
+            <div style={{background:'#f9fafb',border:'2px solid #000',borderRadius:6,padding:'14px',marginBottom:14}}>
+              <div style={{fontSize:'1.1rem',fontWeight:900,textTransform:'uppercase'}}>SAYIN: {printQuote.customerName}</div>
+            </div>
+          )}
+          {/* Ürünler */}
+          <table style={{width:'100%',borderCollapse:'collapse',marginBottom:20}}>
+            <thead><tr style={{borderBottom:'4px solid black'}}>
+              <th style={{textAlign:'left',padding:'8px 0',fontSize:'0.88rem'}}>ÜRÜN / HİZMET</th>
+              <th style={{textAlign:'center',padding:'8px 0',fontSize:'0.88rem'}}>ADET</th>
+              <th style={{textAlign:'right',padding:'8px 0',fontSize:'0.88rem'}}>BİRİM FİYAT</th>
+              <th style={{textAlign:'right',padding:'8px 0',fontSize:'0.88rem'}}>TOPLAM</th>
+            </tr></thead>
+            <tbody>{(printQuote.items||[]).map((item:any,i:number)=>(
+              <tr key={i} style={{borderBottom:'1px solid #e5e7eb'}}>
+                <td style={{padding:'8px 0',fontWeight:700,fontSize:'0.9rem'}}>{item.name}</td>
+                <td style={{padding:'8px 0',textAlign:'center',fontWeight:900}}>{item.qty}</td>
+                <td style={{padding:'8px 0',textAlign:'right',color:'#555',fontSize:'0.85rem'}}>₺{(item.grossPrice||0).toFixed(2)}</td>
+                <td style={{padding:'8px 0',textAlign:'right',fontWeight:900,fontSize:'0.95rem'}}>₺{((item.grossPrice||0)*(item.qty||1)).toFixed(2)}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+          {/* Özet */}
+          <div style={{display:'flex',justifyContent:'flex-end'}}>
+            <div style={{width:'260px',borderTop:'4px solid black',paddingTop:10}}>
+              <div style={{display:'flex',justifyContent:'space-between',color:'#555',marginBottom:4,fontSize:'0.85rem',fontWeight:700}}>
+                <span>Ara Toplam:</span><span>₺{(printQuote.subTotal||0).toFixed(2)}</span>
+              </div>
+              {(printQuote.discountAmount||0)>0&&(
+                <div style={{display:'flex',justifyContent:'space-between',color:'#555',marginBottom:6,paddingBottom:6,borderBottom:'1px solid #e5e7eb',fontSize:'0.85rem',fontWeight:700}}>
+                  <span>İskonto (%{printQuote.discountPct}):</span><span>- ₺{(printQuote.discountAmount||0).toFixed(2)}</span>
+                </div>
+              )}
+              <div style={{display:'flex',justifyContent:'space-between',fontWeight:900,fontSize:'1.8rem',marginTop:6}}>
+                <span>TOPLAM:</span><span>₺{(printQuote.total||0).toFixed(2)}</span>
+              </div>
+            </div>
+          </div>
+          {/* Not */}
+          {printQuote.note&&<div style={{marginTop:20,padding:'10px 14px',background:'#f3f4f6',borderRadius:6,fontSize:'0.8rem',color:'#555'}}>Not: {printQuote.note}</div>}
+          {/* Alt yazı */}
+          <div style={{marginTop:28,textAlign:'center',borderTop:'2px dashed #d1d5db',paddingTop:12,color:'#9ca3af',fontWeight:700,fontSize:'0.72rem'}}>
+            <div>Bu bir ön tekliftir. Fiyatlar geçerlilik tarihine kadar geçerlidir.</div>
+            <div style={{marginTop:2}}>{receiptSettings.companyName} — {receiptSettings.phone}</div>
+          </div>
+        </div>
+      ):(
+        activePrintData&&<ReceiptTemplate sale={activePrintData} settings={receiptSettings}/>
+      )}
     </div>
     </>
   );
