@@ -494,7 +494,7 @@ export default function App(){
     const ref=await addDoc(collection(db,'sales'),sd);
     if(method==='Veresiye'&&ac)await updateDoc(doc(db,'customers',ac.id),{balance:(ac.balance||0)+finalTotal});
     for(const item of cart){const p=products.find(p=>p.id===item.id);if(p&&typeof p.stock==='number')await updateDoc(doc(db,'products',p.id),{stock:Math.max(0,(p.stock||0)-item.qty)});}
-    await logAction('SATIŞ',`${ac?ac.name:'Perakende'} — ${method} — ₺${finalTotal.toFixed(2)}`,finalTotal);
+    await logAction('SATIŞ',`${ac?ac.name:'Perakende'} - ${method} - ₺${finalTotal.toFixed(2)}`,finalTotal);
     setLastSale({id:ref.id,...sd});setCart([]);setCartCustomer('');setDiscountPct('');setIsVeresiyeOpen(false);
   };
   const handleSplitSale=async()=>{
@@ -516,7 +516,7 @@ export default function App(){
     if(cart.length===0)return alert('Sepet boş!');
     const ac=customers.find((c:any)=>c.id===orderCustomer);
     await addDoc(collection(db,'orders'),{items:cart,subTotal:rawTotal,discountPct:discountVal,discountAmount,total:finalTotal,customerName:ac?ac.name:'Müşteri belirtilmemiş',customerTax:ac?ac.taxNum:'-',customerId:orderCustomer||'',note:orderNote,deliveryDate:orderDeliveryDate||'',status:'bekliyor',createdAt:new Date().toLocaleString('tr-TR'),updatedAt:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name});
-    await logAction('SİPARİŞ_OLUŞTUR',`${ac?ac.name:'Müşterisiz'} — ₺${finalTotal.toFixed(2)}`,finalTotal);
+    await logAction('SİPARİŞ_OLUŞTUR',`${ac?ac.name:'Müşterisiz'} - ₺${finalTotal.toFixed(2)}`,finalTotal);
     setCart([]);setCartCustomer('');setDiscountPct('');setOrderCustomer('');setOrderNote('');setOrderDeliveryDate('');setOrderMode(false);
     alert('Sipariş oluşturuldu!');
   };
@@ -550,7 +550,7 @@ export default function App(){
     if(quoteDraft.length===0)return alert('Sepet boş!');
     const ac=customers.find((c:any)=>c.id===quoteCustomer);
     await addDoc(collection(db,'quotes'),{items:quoteDraft,subTotal:qRaw,discountPct:qDiscountVal,discountAmount:qDiscountAmt,total:qTotal,customerName:ac?ac.name:'',customerTax:ac?ac.taxNum:'-',customerId:quoteCustomer||'',note:quoteNote,status:'beklemede',createdAt:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name});
-    await logAction('TEKLİF_OLUŞTUR',`${ac?ac.name:'Müşterisiz'} — ₺${qTotal.toFixed(2)}`,qTotal);
+    await logAction('TEKLİF_OLUŞTUR',`${ac?ac.name:'Müşterisiz'} - ₺${qTotal.toFixed(2)}`,qTotal);
     setQuoteDraft([]);setQuoteCustomer('');setQuoteDiscount('');setQuoteNote('');
     alert('Teklif kaydedildi!');
   };
@@ -562,7 +562,7 @@ export default function App(){
     if(ac&&q.customerId)await updateDoc(doc(db,'customers',q.customerId),{balance:(ac.balance||0)+q.total});
     for(const item of(q.items||[])){const p=products.find(p=>p.id===item.id);if(p&&typeof p.stock==='number')await updateDoc(doc(db,'products',p.id),{stock:Math.max(0,(p.stock||0)-item.qty)});}
     await updateDoc(doc(db,'quotes',q.id),{status:'onaylandi',convertedToSale:true});
-    await logAction('TEKLİF_SATIŞA_ÇEVİR',`${q.customerName} — ₺${q.total.toFixed(2)}`,q.total);
+    await logAction('TEKLİF_SATIŞA_ÇEVİR',`${q.customerName} - ₺${q.total.toFixed(2)}`,q.total);
   };
 
   // ── Returns ───────────────────────────────────────────────────────────
@@ -583,7 +583,7 @@ export default function App(){
       const cust=customers.find(c=>c.name===returnSale.customerName);
       if(cust)await updateDoc(doc(db,'customers',cust.id),{balance:(cust.balance||0)-returnTotal});
     }
-    await logAction('İADE',`#${returnSale.id.slice(-5)} — ₺${returnTotal.toFixed(2)}`,returnTotal);
+    await logAction('İADE',`#${returnSale.id.slice(-5)} - ₺${returnTotal.toFixed(2)}`,returnTotal);
     alert(`${returnType==='iade'?'İade':'Değişim'} tamamlandı!`);
     setReturnSale(null);setReturnSaleId('');setReturnLines([]);setExchangeCart([]);setReturnNote('');
   };
@@ -624,7 +624,7 @@ export default function App(){
     if(t&&!isNaN(Number(t))){
       await updateDoc(doc(db,'customers',customer.id),{balance:(customer.balance||0)-parseFloat(t)});
       await addDoc(collection(db,'sales'),{total:parseFloat(t),method:'Tahsilat',customerName:customer.name,items:[{name:'Cari Tahsilat',qty:1,grossPrice:parseFloat(t)}],date:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name});
-      await logAction('TAHSİLAT',`${customer.name} — ₺${t}`,parseFloat(t));
+      await logAction('TAHSİLAT',`${customer.name} - ₺${t}`,parseFloat(t));
     }
   };
 
@@ -646,7 +646,7 @@ export default function App(){
     const totalCostVal=items.reduce((a,b)=>a+b.qty*b.cost,0);
     await addDoc(collection(db,'purchases'),{supplier:purchaseSupplier,date:purchaseDate||new Date().toISOString().slice(0,10),note:purchaseNote,items,totalCost:totalCostVal,createdAt:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name});
     for(const item of items){const p=products.find(p=>p.id===item.productId);if(p){const upd:any={stock:(p.stock||0)+item.qty};if(item.cost>0)upd.costPrice=item.cost;await updateDoc(doc(db,'products',item.productId),upd);}}
-    await logAction('ALIŞ',`${purchaseSupplier||'Tedarikçi'} — ₺${totalCostVal.toFixed(2)}`,totalCostVal);
+    await logAction('ALIŞ',`${purchaseSupplier||'Tedarikçi'} - ₺${totalCostVal.toFixed(2)}`,totalCostVal);
     setPurchaseSupplier('');setPurchaseDate('');setPurchaseNote('');setPurchaseLines([{productId:'',qty:'',cost:''}]);setShowPurchaseForm(false);
   };
 
@@ -654,7 +654,7 @@ export default function App(){
   const handleAddExpense=async(e:React.FormEvent)=>{
     e.preventDefault();
     await addDoc(collection(db,'expenses'),{name:expName,amount:parseFloat(expAmount)||0,date:new Date().toISOString()});
-    await logAction('GİDER',`${expName} — ₺${expAmount}`,parseFloat(expAmount)||0);
+    await logAction('GİDER',`${expName} - ₺${expAmount}`,parseFloat(expAmount)||0);
     setExpName('');setExpAmount('');
   };
 
@@ -732,7 +732,7 @@ export default function App(){
   const buildMerged=()=>{
     const sorted=[...selSales].sort((a,b)=>parseDT(a.date).getTime()-parseDT(b.date).getTime());
     const allItems:any[]=[];sorted.forEach(s=>(s.items||[]).forEach((i:any)=>allItems.push(i)));
-    const dr=sorted.length>0?`${parseDT(sorted[0].date).toLocaleDateString('tr-TR')} – ${parseDT(sorted[sorted.length-1].date).toLocaleDateString('tr-TR')}`:'';
+    const dr=sorted.length>0?`${parseDT(sorted[0].date).toLocaleDateString('tr-TR')} - ${parseDT(sorted[sorted.length-1].date).toLocaleDateString('tr-TR')}`:'';
     return{id:`MRG-${Date.now()}`,customerName:selectedCustomer?.name||'',customerTax:selectedCustomer?.taxNum||'-',method:'Veresiye',date:new Date().toLocaleString('tr-TR'),dateRange:dr,items:allItems,subTotal:sorted.reduce((a,b)=>a+(b.subTotal||b.total||0),0),discountAmount:sorted.reduce((a,b)=>a+(b.discountAmount||0),0),discountPct:0,total:selTotal,isMerged:true,mergedCount:sorted.length};
   };
   const handleMergedPrint=()=>{setMergedPrint(buildMerged());setTimeout(()=>window.print(),150);};
@@ -803,7 +803,7 @@ export default function App(){
     if(!variantProduct)return;
     const valid=variantDraft.filter(v=>v.name.trim());
     await updateDoc(doc(db,'products',variantProduct.id),{variants:valid,variantGroup:variantGroupName||'Varyant'});
-    await logAction('VARYANT_KAYDET',`${variantProduct.name} — ${valid.length} varyant`);
+    await logAction('VARYANT_KAYDET',`${variantProduct.name} - ${valid.length} varyant`);
     setVariantProduct(null);setVariantDraft([]);
   };
 
@@ -836,7 +836,7 @@ export default function App(){
     <div className={`flex h-screen text-zinc-100 transition-colors duration-300 print:hidden relative ${flash?'bg-emerald-900':'bg-zinc-950'}`}>
 
       {/* ══════════════ SIDEBAR ═══════════════════════════════════════════ */}
-      <aside className={`${mobileMenuOpen?'translate-x-0':'−translate-x-full lg:translate-x-0'} fixed lg:relative z-[400] w-64 h-full bg-zinc-900 border-r border-zinc-800 flex flex-col shrink-0 transition-transform duration-300`}>
+      <aside style={{transform:mobileMenuOpen?'none':'translateX(-100%)'}} className="fixed lg:!transform-none lg:relative z-[400] w-64 h-full bg-zinc-900 border-r border-zinc-800 flex flex-col shrink-0 transition-transform duration-300 lg:translate-x-0">
         <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
           <button onClick={()=>setMobileMenuOpen(false)} className="lg:hidden text-zinc-500 hover:text-white mr-2 p-1"><X size={18}/></button>
           <div className="flex items-center gap-3">
@@ -906,7 +906,7 @@ export default function App(){
       <main className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* Mobile top bar */}
         <div className="lg:hidden flex items-center gap-3 px-4 py-3 bg-zinc-900 border-b border-zinc-800 shrink-0">
-          <button onClick={()=>setMobileMenuOpen(true)} className="text-zinc-400 hover:text-white p-1.5 rounded-xl bg-zinc-800"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
+          <button onClick={()=>setMobileMenuOpen(true)} className="text-zinc-400 hover:text-white p-1.5 rounded-xl bg-zinc-800"><div className="space-y-1.5"><div className="w-5 h-0.5 bg-current"/><div className="w-5 h-0.5 bg-current"/><div className="w-5 h-0.5 bg-current"/></div></button>
           <div className="flex items-center gap-2 flex-1"><div className="w-7 h-7 bg-emerald-500 rounded-lg flex items-center justify-center font-black text-zinc-950 text-sm">M</div><span className="font-black text-white text-sm">Merkez Şube</span></div>
           <span className="text-zinc-500 text-xs">{currentStaff.name}</span>
         </div>
@@ -1472,6 +1472,7 @@ export default function App(){
                   })}
                 </div>
               </div>
+              </div>
             )}
 
             {activePage==='stock.count'&&(
@@ -1532,6 +1533,8 @@ export default function App(){
                     </div>
                   </div>
                 </div>
+              </div>
+            </div>
               </div>
             )}
 
@@ -1942,7 +1945,7 @@ export default function App(){
                 </div>
                 <div className="grid grid-cols-3 gap-5 mb-6">
                   <div className="bg-red-500/10 border border-red-500/30 p-5 rounded-2xl"><p className="text-red-400 text-xs font-bold uppercase mb-1">Günlük Gider</p><p className="text-3xl font-black text-red-400">₺{dayExpense.toFixed(2)}</p></div>
-                  <div className={`p-5 rounded-2xl border-2 ${dayCashNet>=0?'bg-emerald-500/10 border-emerald-500/40':'bg-red-500/10 border-red-500/40'}`}><p className={`text-xs font-bold uppercase mb-1 ${dayCashNet>=0?'text-emerald-400':'text-red-400'}`}>💰 Net Kasa</p><p className={`text-3xl font-black ${dayCashNet>=0?'text-emerald-400':'text-red-400'}`}>₺{dayCashNet.toFixed(2)}</p><p className="text-zinc-600 text-xs mt-1">Nakit+Tahsilat−Gider</p></div>
+                  <div className={`p-5 rounded-2xl border-2 ${dayCashNet>=0?'bg-emerald-500/10 border-emerald-500/40':'bg-red-500/10 border-red-500/40'}`}><p className={`text-xs font-bold uppercase mb-1 ${dayCashNet>=0?'text-emerald-400':'text-red-400'}`}>💰 Net Kasa</p><p className={`text-3xl font-black ${dayCashNet>=0?'text-emerald-400':'text-red-400'}`}>₺{dayCashNet.toFixed(2)}</p><p className="text-zinc-600 text-xs mt-1">Nakit+Tahsilat-Gider</p></div>
                   <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"><p className="text-zinc-400 text-xs font-bold uppercase mb-1">Satış Adedi</p><p className="text-3xl font-black text-white">{reportSales.filter(s=>s.method!=='Tahsilat').length}</p></div>
                 </div>
                 {reportSales.filter(s=>s.method!=='Tahsilat').length>0&&(
@@ -2160,7 +2163,6 @@ export default function App(){
             <div className="flex-1 overflow-y-auto bg-zinc-950 p-7">
               <div className="flex items-center gap-2 mb-4"><Eye size={12} className="text-emerald-500"/><span className="text-zinc-400 font-bold text-sm uppercase">Önizleme</span><span className="bg-zinc-800 text-zinc-400 text-xs font-bold px-2.5 py-1 rounded-lg border border-zinc-700 ml-2">{PAPER_LABELS[draftSettings.paperSize]}</span></div>
               <div className="bg-zinc-800/30 rounded-2xl p-5 flex justify-center"><div className="bg-white rounded-xl shadow-2xl shadow-black/60 overflow-hidden" style={{width:`${Math.min(PAPER_WIDTHS[draftSettings.paperSize],580)}px`}}><ReceiptTemplate sale={demoSale} settings={draftSettings} preview={true}/></div></div>
-            </div>
             </div>
             </div>
             )}
@@ -2416,7 +2418,7 @@ export default function App(){
                       <div key={i} className="flex items-center gap-4 bg-zinc-950 border border-zinc-800 rounded-xl p-4">
                         <div className={`shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-sm ${h.type==='zam'?'bg-emerald-500/20 text-emerald-400':'bg-red-500/20 text-red-400'}`}>{h.type==='zam'?'↑':'↓'}</div>
                         <div className="flex-1">
-                          <div className="flex items-center gap-2"><span className="font-bold text-white text-sm">{h.field==='grossPrice'?'Satış Fiyatı':'Alış Fiyatı'}</span><span className={`text-xs font-bold px-2 py-0.5 rounded-full ${h.type==='zam'?'bg-emerald-500/20 text-emerald-400':'bg-red-500/20 text-red-400'}`}>{h.type==='zam'?'+':'−'}%{h.pct}</span></div>
+                          <div className="flex items-center gap-2"><span className="font-bold text-white text-sm">{h.field==='grossPrice'?'Satış Fiyatı':'Alış Fiyatı'}</span><span className={`text-xs font-bold px-2 py-0.5 rounded-full ${h.type==='zam'?'bg-emerald-500/20 text-emerald-400':'bg-red-500/20 text-red-400'}`}>{h.type==='zam'?'+':'-'}%{h.pct}</span></div>
                           <div className="text-zinc-500 text-xs mt-0.5">{h.date}{h.staffName&&` · ${h.staffName}`}</div>
                         </div>
                         <div className="text-right"><div className="text-zinc-500 text-sm line-through">₺{(h.oldVal||0).toFixed(2)}</div><div className={`font-black text-lg ${h.type==='zam'?'text-emerald-400':'text-red-400'}`}>₺{(h.newVal||0).toFixed(2)}</div></div>
@@ -2598,7 +2600,7 @@ export default function App(){
           {printQuote.note&&<div style={{marginTop:20,padding:'10px 14px',background:'#f3f4f6',borderRadius:6,fontSize:'0.8rem',color:'#555'}}>Not: {printQuote.note}</div>}
           <div style={{marginTop:28,textAlign:'center',borderTop:'2px dashed #d1d5db',paddingTop:12,color:'#9ca3af',fontWeight:700,fontSize:'0.72rem'}}>
             <div>Bu bir ön tekliftir. Fiyatlar geçerlilik tarihine kadar geçerlidir.</div>
-            <div style={{marginTop:2}}>{receiptSettings.companyName}{receiptSettings.phone&&` — ${receiptSettings.phone}`}</div>
+            <div style={{marginTop:2}}>{receiptSettings.companyName}{receiptSettings.phone&&` - ${receiptSettings.phone}`}</div>
           </div>
         </div>
       ):(
