@@ -10,7 +10,7 @@ import {
   ClipboardCheck, FolderOpen, Pencil, ArrowUpDown, Ban, ShoppingBag,
   FileText, Receipt, MessageSquare, Filter, LogIn, LogOut, UserCog,
   Shield, RefreshCw, ArrowLeftRight, Tag, Clock, UserCheck, Key,
-  SendHorizonal, Activity, Columns
+  SendHorizonal, Activity, Columns, Settings
 } from 'lucide-react';
 
 // ─── Safe icon aliases ─────────────────────────────────────────────────────
@@ -277,6 +277,7 @@ export default function App(){
   // ── Nav ───────────────────────────────────────────────────────────────
   const [activePage,setActivePage]=useState('pos');
   const [stockOpen,setStockOpen]=useState(true);
+  const [mobileMenuOpen,setMobileMenuOpen]=useState(false);
   // ── POS ───────────────────────────────────────────────────────────────
   const [cart,setCart]=useState<any[]>([]);
   const [searchQuery,setSearchQuery]=useState('');
@@ -353,7 +354,11 @@ export default function App(){
   // ── Reports ───────────────────────────────────────────────────────────
   const [expName,setExpName]=useState('');const [expAmount,setExpAmount]=useState('');
   const [reportDate,setReportDate]=useState(new Date().toISOString().slice(0,10));
-  const [reportTab,setReportTab]=useState<'genel'|'gunSonu'|'kdv'|'personel'>('genel');
+  const [reportTab,setReportTab]=useState<'genel'|'gunSonu'|'kdv'|'personel'|'aylik'|'parasut'>('genel');
+  const [reportMonth,setReportMonth]=useState(new Date().toISOString().slice(0,7)); // YYYY-MM
+  const [settingsTab,setSettingsTab]=useState<'fis'|'parasut'>('fis');
+  const [parasutFirm,setParasutFirm]=useState(()=>localStorage.getItem('parasutFirm')||'');
+  const [parasutDepot,setParasutDepot]=useState(()=>localStorage.getItem('parasutDepot')||'');
   const [staffLogFilter,setStaffLogFilter]=useState('all');
   const [staffLogDateFilter,setStaffLogDateFilter]=useState('');
   // ── Staff ─────────────────────────────────────────────────────────────
@@ -364,6 +369,22 @@ export default function App(){
   const [editingStaff,setEditingStaff]=useState<any>(null);
   const [editStaffPerms,setEditStaffPerms]=useState<string[]>([]);
   const [editStaffPin,setEditStaffPin]=useState('');
+  // ── Dashboard ────────────────────────────────────────────────────────
+  const [dashPeriod,setDashPeriod]=useState<'7'|'30'|'90'>('30');
+  // ── Toplu Fiyat ──────────────────────────────────────────────────────
+  const [bulkSelected,setBulkSelected]=useState<Set<string>>(new Set());
+  const [bulkPct,setBulkPct]=useState('');
+  const [bulkType,setBulkType]=useState<'zam'|'indirim'>('zam');
+  const [bulkField,setBulkField]=useState<'grossPrice'|'costPrice'>('grossPrice');
+  const [bulkDone,setBulkDone]=useState(false);
+  // ── Ürün Varyantları ──────────────────────────────────────────────────
+  const [variantProduct,setVariantProduct]=useState<any>(null);
+  const [variantDraft,setVariantDraft]=useState<{name:string;barcode:string;stock:string}[]>([]);
+  const [variantGroupName,setVariantGroupName]=useState('');
+  // ── Fiyat Geçmişi ─────────────────────────────────────────────────────
+  const [priceHistoryProduct,setPriceHistoryProduct]=useState<any>(null);
+  const [priceHistory,setPriceHistory]=useState<any[]>([]);
+  const [priceHistoryLoading,setPriceHistoryLoading]=useState(false);
   // ── Receipt ───────────────────────────────────────────────────────────
   const [receiptSettings,setReceiptSettings]=useState<ReceiptSettings>(loadSettings);
   const [draftSettings,setDraftSettings]=useState<ReceiptSettings>(loadSettings);
@@ -723,6 +744,69 @@ export default function App(){
     return Object.values(map).sort((a,b)=>b.totalQty-a.totalQty);
   },[customerSales,selectedCustomer]);
 
+  // ── Dashboard helpers ────────────────────────────────────────────────
+  const dashSalesData=()=>{
+    const days=parseInt(dashPeriod);
+    const now=Date.now();
+    const map:Record<string,{date:string;ciro:number;adet:number}>={};
+    for(let i=days-1;i>=0;i--){const d=new Date(now-i*86400000);const key=d.toLocaleDateString('tr-TR',{day:'2-digit',month:'2-digit'});map[key]={date:key,ciro:0,adet:0};}
+    sales.filter(s=>s.method!=='Tahsilat').forEach(s=>{
+      const d=parseDT(s.date);if(now-d.getTime()>days*86400000)return;
+      const key=d.toLocaleDateString('tr-TR',{day:'2-digit',month:'2-digit'});
+      if(map[key]){map[key].ciro+=(s.total||0);map[key].adet++;}
+    });
+    return Object.values(map);
+  };
+  const topProducts=()=>{
+    const map:Record<string,{name:string;adet:number;ciro:number}>={};
+    sales.filter(s=>s.method!=='Tahsilat').forEach(s=>{(s.items||[]).forEach((item:any)=>{const k=item.name||'?';if(!map[k])map[k]={name:k,adet:0,ciro:0};map[k].adet+=(item.qty||1);map[k].ciro+=(item.grossPrice||0)*(item.qty||1);});});
+    return Object.values(map).sort((a,b)=>b.ciro-a.ciro).slice(0,8);
+  };
+  const payMethodData=()=>{
+    const methods:Record<string,number>={};
+    sales.filter(s=>s.method!=='Tahsilat').forEach(s=>{const m=s.method||'Diğer';methods[m]=(methods[m]||0)+(s.total||0);});
+    return Object.entries(methods).map(([name,value])=>({name,value:parseFloat(value.toFixed(2))}));
+  };
+  const PIE_COLORS=['#10b981','#3b82f6','#f59e0b','#ef4444','#8b5cf6'];
+
+  // ── Toplu fiyat güncelleme ────────────────────────────────────────────
+  const handleBulkPrice=async()=>{
+    if(bulkSelected.size===0||!bulkPct)return alert('Ürün seçin ve oran girin.');
+    const pct=parseFloat(bulkPct)/100;
+    for(const id of bulkSelected){
+      const p=products.find(p=>p.id===id);if(!p)continue;
+      const cur=p[bulkField]||0;
+      const newVal=bulkType==='zam'?parseFloat((cur*(1+pct)).toFixed(2)):parseFloat((cur*(1-pct)).toFixed(2));
+      const upd:any={[bulkField]:newVal};
+      // grossPrice değişince netPrice de güncelle
+      if(bulkField==='grossPrice'){upd.netPrice=parseFloat((newVal/(1+(p.taxRate||20)/100)).toFixed(2));}
+      // Fiyat geçmişi yaz
+      await addDoc(collection(db,'priceHistory'),{productId:id,productName:p.name,field:bulkField,oldVal:cur,newVal,pct:parseFloat(bulkPct),type:bulkType,date:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name});
+      await updateDoc(doc(db,'products',id),upd);
+    }
+    await logAction('TOPLU_FİYAT',`${bulkSelected.size} ürüne %${bulkPct} ${bulkType}`,0);
+    setBulkDone(true);setTimeout(()=>setBulkDone(false),2500);setBulkSelected(new Set());setBulkPct('');
+  };
+
+  // ── Fiyat geçmişi yükle ───────────────────────────────────────────────
+  const loadPriceHistory=async(productId:string)=>{
+    setPriceHistoryLoading(true);
+    const unsub=onSnapshot(collection(db,'priceHistory'),snap=>{
+      const rows=snap.docs.map(d=>({id:d.id,...d.data()})).filter((r:any)=>r.productId===productId).sort((a:any,b:any)=>parseDT(b.date).getTime()-parseDT(a.date).getTime());
+      setPriceHistory(rows);setPriceHistoryLoading(false);
+    });
+    return unsub;
+  };
+
+  // ── Varyant kaydet ────────────────────────────────────────────────────
+  const handleSaveVariants=async()=>{
+    if(!variantProduct)return;
+    const valid=variantDraft.filter(v=>v.name.trim());
+    await updateDoc(doc(db,'products',variantProduct.id),{variants:valid,variantGroup:variantGroupName||'Varyant'});
+    await logAction('VARYANT_KAYDET',`${variantProduct.name} — ${valid.length} varyant`);
+    setVariantProduct(null);setVariantDraft([]);
+  };
+
   // ── Receipt settings ──────────────────────────────────────────────────
   const saveRSettings=()=>{setReceiptSettings({...draftSettings});saveSettingsLS(draftSettings);setSettingsSaved(true);setTimeout(()=>setSettingsSaved(false),2000);};
   const upDraft=(k:keyof ReceiptSettings,v:any)=>setDraftSettings(prev=>({...prev,[k]:v}));
@@ -749,11 +833,12 @@ export default function App(){
 
   return (
     <>
-    <div className={`flex h-screen text-zinc-100 transition-colors duration-300 print:hidden ${flash?'bg-emerald-900':'bg-zinc-950'}`}>
+    <div className={`flex h-screen text-zinc-100 transition-colors duration-300 print:hidden relative ${flash?'bg-emerald-900':'bg-zinc-950'}`}>
 
       {/* ══════════════ SIDEBAR ═══════════════════════════════════════════ */}
-      <aside className="w-64 bg-zinc-900 border-r border-zinc-800 flex flex-col shrink-0">
+      <aside className={`${mobileMenuOpen?'translate-x-0':'−translate-x-full lg:translate-x-0'} fixed lg:relative z-[400] w-64 h-full bg-zinc-900 border-r border-zinc-800 flex flex-col shrink-0 transition-transform duration-300`}>
         <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
+          <button onClick={()=>setMobileMenuOpen(false)} className="lg:hidden text-zinc-500 hover:text-white mr-2 p-1"><X size={18}/></button>
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 bg-emerald-500 rounded-xl flex items-center justify-center font-bold text-zinc-950 text-base">M</div>
             <div><h1 className="font-bold text-sm text-white">Merkez Şube</h1><p className="text-[10px] text-zinc-500">Perakende Şubesi</p></div>
@@ -798,6 +883,7 @@ export default function App(){
                   {p:'stock.movements',icon:<ArrowUpDown size={13}/>,label:'Stok Hareketleri'},
                   {p:'stock.count',icon:<ClipboardCheck size={13}/>,label:'Stok Sayım'},
                   {p:'stock.tracking',icon:<Boxes size={13}/>,label:'Stok Takibi'},
+                  {p:'stock.bulk',icon:<Zap size={13}/>,label:'Toplu Fiyat Güncelle'},
                 ].map(item=>(
                   <button key={item.p} onClick={()=>setActivePage(item.p)} className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm ${activePage===item.p?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-500 hover:bg-zinc-800 hover:text-white'}`}>
                     {item.icon}<span>{item.label}</span>
@@ -809,17 +895,107 @@ export default function App(){
 
           {canDo('customers')&&<button onClick={()=>setActivePage('customers')} className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium mt-1 ${activePage==='customers'||activePage==='customers.categories'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`}><Users size={15}/><span className="flex-1 text-left">Müşteri & Tedarikçi</span></button>}
           <div className="border-t border-zinc-800/60 my-2"/>
+          <button onClick={()=>setActivePage('dashboard')} className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium ${activePage==='dashboard'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`}><BarChart3 size={15}/><span>Dashboard</span></button>
           {(canDo('reports.genel')||canDo('reports.gunSonu')||canDo('reports.kdv')||currentStaff?.role==='admin')&&<button onClick={()=>setActivePage('reports')} className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium ${activePage==='reports'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`}><BarChart3 size={15}/><span>Rapor & Analiz</span></button>}
           {currentStaff.role==='admin'&&<button onClick={()=>setActivePage('personel')} className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium ${activePage==='personel'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`}><UserCog size={15}/><span>Personel</span></button>}
-          {(canDo('receipt')||currentStaff?.role==='admin')&&<button onClick={()=>setActivePage('receipt')} className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium ${activePage==='receipt'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`}><Palette size={15}/><span>Fiş Tasarımı</span></button>}
+          {(canDo('receipt')||currentStaff?.role==='admin')&&<button onClick={()=>setActivePage('settings')} className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium ${activePage==='settings'||activePage==='receipt'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`}><Settings size={15}/><span>Ayarlar</span></button>}
         </nav>
       </aside>
 
-      <main className="flex-1 flex overflow-hidden">
+      {mobileMenuOpen&&<div className="fixed inset-0 bg-black/60 z-[390] lg:hidden" onClick={()=>setMobileMenuOpen(false)}/>}
+      <main className="flex-1 flex flex-col overflow-hidden min-w-0">
+        {/* Mobile top bar */}
+        <div className="lg:hidden flex items-center gap-3 px-4 py-3 bg-zinc-900 border-b border-zinc-800 shrink-0">
+          <button onClick={()=>setMobileMenuOpen(true)} className="text-zinc-400 hover:text-white p-1.5 rounded-xl bg-zinc-800"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
+          <div className="flex items-center gap-2 flex-1"><div className="w-7 h-7 bg-emerald-500 rounded-lg flex items-center justify-center font-black text-zinc-950 text-sm">M</div><span className="font-black text-white text-sm">Merkez Şube</span></div>
+          <span className="text-zinc-500 text-xs">{currentStaff.name}</span>
+        </div>
+        <div className="flex-1 flex overflow-hidden">
 
         {/* ═══ POS ═══════════════════════════════════════════════════════ */}
+
+        {/* ═══ DASHBOARD ════════════════════════════════════════════════════ */}
+        {activePage==='dashboard'&&(
+          <div className="p-7 w-full overflow-y-auto">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="text-3xl font-black flex items-center gap-3"><BarChart3 className="text-emerald-500"/> Dashboard</h2>
+                <p className="text-zinc-500 text-sm mt-0.5">Satış performansı ve özet analiz</p>
+              </div>
+              <div className="flex gap-2 bg-zinc-900 p-1.5 rounded-2xl border border-zinc-800">
+                {(['7','30','90'] as const).map(d=><button key={d} onClick={()=>setDashPeriod(d)} className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${dashPeriod===d?'bg-emerald-500 text-zinc-950':'text-zinc-500 hover:text-white'}`}>Son {d} Gün</button>)}
+              </div>
+            </div>
+
+            {/* Özet kartlar */}
+            {(()=>{
+              const days=parseInt(dashPeriod);
+              const now=Date.now();
+              const filtSales=sales.filter(s=>s.method!=='Tahsilat'&&now-parseDT(s.date).getTime()<=days*86400000);
+              const ciro=filtSales.reduce((a,b)=>a+(b.total||0),0);
+              const adet=filtSales.length;
+              const avgSale=adet>0?ciro/adet:0;
+              const veresiye=filtSales.filter(s=>s.method==='Veresiye').reduce((a,b)=>a+(b.total||0),0);
+              return(
+                <div className="grid grid-cols-4 gap-5 mb-8">
+                  <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"><p className="text-zinc-500 text-xs font-bold uppercase mb-1">Toplam Ciro</p><p className="text-3xl font-black text-emerald-400">₺{ciro.toFixed(2)}</p><p className="text-zinc-600 text-xs mt-1">Son {dashPeriod} gün</p></div>
+                  <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"><p className="text-zinc-500 text-xs font-bold uppercase mb-1">Satış Adedi</p><p className="text-3xl font-black text-white">{adet}</p><p className="text-zinc-600 text-xs mt-1">fatura</p></div>
+                  <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"><p className="text-zinc-500 text-xs font-bold uppercase mb-1">Ortalama Sepet</p><p className="text-3xl font-black text-blue-400">₺{avgSale.toFixed(2)}</p></div>
+                  <div className="bg-orange-500/10 border border-orange-500/30 p-5 rounded-2xl"><p className="text-orange-400 text-xs font-bold uppercase mb-1">Açık Veresiye</p><p className="text-3xl font-black text-orange-400">₺{veresiye.toFixed(2)}</p></div>
+                </div>
+              );
+            })()}
+
+            {/* Satış trendi grafiği */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+              <div className="lg:col-span-2 bg-zinc-900 border border-zinc-800 p-6 rounded-3xl">
+                <h3 className="font-black text-lg mb-5 flex items-center gap-2"><TrendingUp size={16} className="text-emerald-400"/> Günlük Satış Trendi</h3>
+                <ResponsiveContainer width="100%" height={260}>
+                  <LineChart data={dashSalesData()} margin={{top:5,right:10,left:0,bottom:5}}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#27272a"/>
+                    <XAxis dataKey="date" tick={{fill:'#71717a',fontSize:11}} tickLine={false} axisLine={false} interval={Math.floor(dashSalesData().length/6)}/>
+                    <YAxis tick={{fill:'#71717a',fontSize:11}} tickLine={false} axisLine={false} tickFormatter={v=>`₺${v}`}/>
+                    <Tooltip contentStyle={{background:'#18181b',border:'1px solid #3f3f46',borderRadius:12,color:'#fff'}} formatter={(v:any)=>[`₺${Number(v).toFixed(2)}`,'Ciro']}/>
+                    <Line type="monotone" dataKey="ciro" stroke="#10b981" strokeWidth={2.5} dot={false} activeDot={{r:5,fill:'#10b981'}}/>
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl">
+                <h3 className="font-black text-lg mb-5 flex items-center gap-2"><Receipt size={16} className="text-blue-400"/> Ödeme Yöntemleri</h3>
+                {payMethodData().length===0?<p className="text-zinc-600 text-center py-8 text-sm">Veri yok</p>:(
+                  <ResponsiveContainer width="100%" height={200}>
+                    <PieChart>
+                      <Pie data={payMethodData()} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} paddingAngle={3}>
+                        {payMethodData().map((_,i)=><Cell key={i} fill={PIE_COLORS[i%PIE_COLORS.length]}/>)}
+                      </Pie>
+                      <Tooltip contentStyle={{background:'#18181b',border:'1px solid #3f3f46',borderRadius:12,color:'#fff'}} formatter={(v:any)=>[`₺${Number(v).toFixed(2)}`]}/>
+                      <Legend wrapperStyle={{fontSize:12,color:'#a1a1aa'}}/>
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            </div>
+
+            {/* En çok satan ürünler */}
+            <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl">
+              <h3 className="font-black text-lg mb-5 flex items-center gap-2"><Package size={16} className="text-purple-400"/> En Çok Satan Ürünler (Tüm Zamanlar)</h3>
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={topProducts()} layout="vertical" margin={{top:0,right:20,left:20,bottom:0}}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" horizontal={false}/>
+                  <XAxis type="number" tick={{fill:'#71717a',fontSize:11}} tickLine={false} axisLine={false} tickFormatter={v=>`₺${v}`}/>
+                  <YAxis type="category" dataKey="name" tick={{fill:'#a1a1aa',fontSize:11}} tickLine={false} axisLine={false} width={120}/>
+                  <Tooltip contentStyle={{background:'#18181b',border:'1px solid #3f3f46',borderRadius:12,color:'#fff'}} formatter={(v:any,name:string)=>[name==='ciro'?`₺${Number(v).toFixed(2)}`:v, name==='ciro'?'Ciro':'Adet']}/>
+                  <Legend wrapperStyle={{fontSize:12,color:'#a1a1aa'}}/>
+                  <Bar dataKey="ciro" name="Ciro" fill="#10b981" radius={[0,6,6,0]}/>
+                  <Bar dataKey="adet" name="Adet" fill="#3b82f6" radius={[0,6,6,0]}/>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+
         {activePage==='pos'&&(
-          <div className="flex w-full">
+          <div className="flex flex-col lg:flex-row w-full">
             <div className="flex-1 p-5 flex flex-col overflow-hidden">
               <div className="flex items-center gap-3 mb-4">
                 <div className="relative flex-1"><Search className="absolute left-3.5 top-3 text-zinc-500" size={16}/><input type="text" value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Ürün adı veya barkod..." className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl py-3 pl-11 pr-4 outline-none focus:border-emerald-500 text-sm"/></div>
@@ -833,7 +1009,7 @@ export default function App(){
                   <div className="flex items-center gap-2"><label className="text-zinc-500 text-xs font-bold">Teslim:</label><input type="date" value={orderDeliveryDate} onChange={e=>setOrderDeliveryDate(e.target.value)} className="bg-zinc-900 border border-zinc-700 text-white px-3 py-2 rounded-xl text-sm outline-none"/></div>
                 </div>
               )}
-              <div className="flex-1 overflow-y-auto grid grid-cols-2 lg:grid-cols-4 gap-3 content-start">
+              <div className="flex-1 overflow-y-auto grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 lg:gap-3 content-start">
                 {products.filter(p=>(p.name||'').toLowerCase().includes(searchQuery.toLowerCase())||(p.barcode||'').includes(searchQuery)).map(p=>(
                   <button key={p.id} onClick={()=>addToCart(p)} className={`border p-4 rounded-2xl text-left hover:border-emerald-500 transition-all flex flex-col justify-between h-32 group ${(p.stock||0)===0?'bg-zinc-900/50 border-red-900/30 opacity-60':'bg-zinc-900 border-zinc-800 hover:bg-zinc-800/50'}`}>
                     <span className="font-bold text-zinc-200 group-hover:text-emerald-400 line-clamp-2 text-sm">{p.name||'İsimsiz'}</span>
@@ -849,7 +1025,7 @@ export default function App(){
               </div>
             </div>
             {/* Sepet */}
-            <div className="w-[400px] bg-zinc-900 border-l border-zinc-800 flex flex-col shadow-2xl">
+            <div className="w-full lg:w-[400px] max-h-[50vh] lg:max-h-full bg-zinc-900 border-t lg:border-t-0 lg:border-l border-zinc-800 flex flex-col shadow-2xl">
               <div className="p-4 border-b border-zinc-800">
                 <div className="flex items-center gap-2 mb-3 font-black text-base"><ShoppingCart className="text-emerald-500" size={17}/>{orderMode?'📦 YENİ SİPARİŞ':'SATIŞ FİŞİ'}</div>
                 {!orderMode&&<select value={cartCustomer} onChange={e=>setCartCustomer(e.target.value)} className="w-full bg-zinc-950 border border-zinc-700 p-2.5 rounded-xl text-white outline-none text-sm font-bold"><option value="">-- Perakende --</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>}
@@ -943,6 +1119,7 @@ export default function App(){
                         </>}
                         {order.status==='hazirlaniyor'&&<button onClick={()=>handleOrderStatus(order.id,'gönderildi')} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1"><SendHorizonal size={11}/> Gönderildi</button>}
                         {(order.status==='bekliyor'||order.status==='hazirlaniyor')&&<button onClick={()=>handleOrderStatus(order.id,'iptal')} className="bg-zinc-800 hover:bg-red-600 text-zinc-400 hover:text-white px-3 py-1.5 rounded-lg text-xs font-bold border border-zinc-700 flex items-center gap-1"><Ban size={11}/> İptal</button>}
+                        {(order.status==='iptal'||order.status==='gönderildi')&&<button onClick={()=>{if(window.confirm('Sipariş kalıcı olarak silinsin mi?'))deleteDoc(doc(db,'orders',order.id));}} className="bg-zinc-800 hover:bg-red-600 text-zinc-400 hover:text-white px-3 py-1.5 rounded-lg text-xs font-bold border border-zinc-700 flex items-center gap-1"><Trash2 size={11}/> Sil</button>}
                         {order.status==='gönderildi'&&<span className="text-emerald-500 text-xs font-bold flex items-center gap-1"><CheckCircle size={12}/> Satışa Dönüştürüldü</span>}
                       </div>
                     </div>
@@ -1185,8 +1362,10 @@ export default function App(){
                             <td className="p-4 text-center"><span className={`${sc.badge} text-white text-xs font-black px-2.5 py-1 rounded-full`}>{p.stock||0}</span></td>
                             <td className="p-4 text-center">
                               <div className="flex items-center justify-center gap-1">
-                                <button onClick={()=>openEditProduct(p)} className="text-zinc-600 hover:text-emerald-400 p-1.5 rounded-lg hover:bg-zinc-800"><Pencil size={13}/></button>
-                                <button onClick={()=>deleteDoc(doc(db,'products',p.id))} className="text-zinc-600 hover:text-red-500 p-1.5 rounded-lg hover:bg-zinc-800"><Trash2 size={13}/></button>
+                                <button onClick={()=>openEditProduct(p)} className="text-zinc-600 hover:text-emerald-400 p-1.5 rounded-lg hover:bg-zinc-800" title="Düzenle"><Pencil size={13}/></button>
+                                <button onClick={()=>{setVariantProduct(p);setVariantDraft((p.variants||[]).length>0?[...p.variants]:[{name:'',barcode:'',stock:''}]);setVariantGroupName(p.variantGroup||'');}} className="text-zinc-600 hover:text-purple-400 p-1.5 rounded-lg hover:bg-zinc-800" title="Varyantlar"><Boxes size={13}/></button>
+                                <button onClick={async()=>{setPriceHistoryProduct(p);await loadPriceHistory(p.id);}} className="text-zinc-600 hover:text-yellow-400 p-1.5 rounded-lg hover:bg-zinc-800" title="Fiyat Geçmişi"><TrendingUp size={13}/></button>
+                                <button onClick={()=>deleteDoc(doc(db,'products',p.id))} className="text-zinc-600 hover:text-red-500 p-1.5 rounded-lg hover:bg-zinc-800" title="Sil"><Trash2 size={13}/></button>
                               </div>
                             </td>
                           </tr>
@@ -1356,6 +1535,78 @@ export default function App(){
               </div>
             )}
 
+
+            {activePage==='stock.bulk'&&(
+              <div className="flex-1 overflow-y-auto p-7">
+                <div className="flex items-center justify-between mb-6">
+                  <div>
+                    <h2 className="text-2xl font-black flex items-center gap-2"><Zap className="text-yellow-400"/> Toplu Fiyat Güncelleme</h2>
+                    <p className="text-zinc-500 text-sm mt-0.5">Seçili ürünlere toplu zam veya indirim uygula</p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="flex gap-2">
+                      <button onClick={()=>setBulkType('zam')} className={`px-4 py-2.5 rounded-xl font-bold text-sm border transition-all ${bulkType==='zam'?'bg-emerald-500 text-zinc-950 border-emerald-500':'bg-zinc-800 text-zinc-400 border-zinc-700'}`}>📈 Zam</button>
+                      <button onClick={()=>setBulkType('indirim')} className={`px-4 py-2.5 rounded-xl font-bold text-sm border transition-all ${bulkType==='indirim'?'bg-red-500 text-white border-red-500':'bg-zinc-800 text-zinc-400 border-zinc-700'}`}>📉 İndirim</button>
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={()=>setBulkField('grossPrice')} className={`px-4 py-2.5 rounded-xl font-bold text-sm border transition-all ${bulkField==='grossPrice'?'bg-blue-500 text-white border-blue-500':'bg-zinc-800 text-zinc-400 border-zinc-700'}`}>Satış Fiyatı</button>
+                      <button onClick={()=>setBulkField('costPrice')} className={`px-4 py-2.5 rounded-xl font-bold text-sm border transition-all ${bulkField==='costPrice'?'bg-blue-500 text-white border-blue-500':'bg-zinc-800 text-zinc-400 border-zinc-700'}`}>Alış Fiyatı</button>
+                    </div>
+                    <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-2.5">
+                      <span className="text-zinc-500 font-bold text-sm">%</span>
+                      <input type="number" min="0" max="100" step="0.1" value={bulkPct} onChange={e=>setBulkPct(e.target.value)} placeholder="0" className="w-16 bg-transparent text-white outline-none font-black text-lg text-center"/>
+                    </div>
+                    <button onClick={()=>setBulkSelected(new Set(products.map(p=>p.id)))} className="bg-zinc-800 text-zinc-400 px-4 py-2.5 rounded-xl font-bold text-sm border border-zinc-700 hover:border-zinc-600">Tümü</button>
+                    <button onClick={()=>setBulkSelected(new Set())} className="bg-zinc-800 text-zinc-400 px-4 py-2.5 rounded-xl font-bold text-sm border border-zinc-700 hover:border-zinc-600"><X size={14}/></button>
+                    <button onClick={handleBulkPrice} className={`px-6 py-2.5 rounded-xl font-black text-sm flex items-center gap-2 shadow-lg ${bulkDone?'bg-emerald-400 text-zinc-950':'bg-yellow-400 text-zinc-950 hover:bg-yellow-300 shadow-yellow-400/20'}`}>
+                      {bulkDone?<><CheckCircle size={16}/> Uygulandı!</>:<><Zap size={16}/> Uygula ({bulkSelected.size})</>}
+                    </button>
+                  </div>
+                </div>
+                <div className="bg-zinc-900 rounded-3xl overflow-hidden border border-zinc-800">
+                  <table className="w-full text-left">
+                    <thead className="bg-zinc-950 text-zinc-500 text-xs font-bold uppercase tracking-widest">
+                      <tr>
+                        <th className="p-4 w-10"><button onClick={()=>{if(bulkSelected.size===products.length)setBulkSelected(new Set());else setBulkSelected(new Set(products.map(p=>p.id)));}} className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center ${bulkSelected.size===products.length?'bg-emerald-500 border-emerald-500':'border-zinc-600'}`}>{bulkSelected.size===products.length&&<CheckCircle size={12} className="text-zinc-950"/>}</button></th>
+                        <th className="p-4">Ürün</th>
+                        <th className="p-4">Kategori</th>
+                        <th className="p-4 text-right">Alış Fiyatı</th>
+                        <th className="p-4 text-right">Satış Fiyatı</th>
+                        <th className="p-4 text-right text-yellow-400">Yeni Fiyat</th>
+                        <th className="p-4 text-center">Stok</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-800/50">
+                      {products.map(p=>{
+                        const isSel=bulkSelected.has(p.id);
+                        const cur=p[bulkField]||0;
+                        const pct=parseFloat(bulkPct)||0;
+                        const newVal=pct>0?(bulkType==='zam'?cur*(1+pct/100):cur*(1-pct/100)):null;
+                        return(
+                          <tr key={p.id} onClick={()=>setBulkSelected(prev=>{const n=new Set(prev);n.has(p.id)?n.delete(p.id):n.add(p.id);return n;})} className={`cursor-pointer transition-colors ${isSel?'bg-yellow-500/5 hover:bg-yellow-500/10':'hover:bg-zinc-800/30'}`}>
+                            <td className="p-4"><div className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center ${isSel?'bg-emerald-500 border-emerald-500':'border-zinc-600'}`}>{isSel&&<CheckCircle size={12} className="text-zinc-950"/>}</div></td>
+                            <td className="p-4 font-bold text-white text-sm">{p.name}</td>
+                            <td className="p-4">{p.category?<span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{background:catColor(p.category)+'33',color:catColor(p.category)}}>{p.category}</span>:<span className="text-zinc-700 text-xs">—</span>}</td>
+                            <td className={`p-4 text-right text-sm font-bold ${bulkField==='costPrice'&&isSel?'text-blue-400':'text-blue-400/60'}`}>₺{(p.costPrice||0).toFixed(2)}</td>
+                            <td className={`p-4 text-right text-sm font-bold ${bulkField==='grossPrice'&&isSel?'text-white':'text-zinc-500'}`}>₺{(p.grossPrice||0).toFixed(2)}</td>
+                            <td className="p-4 text-right">
+                              {newVal&&isSel?(
+                                <div>
+                                  <span className={`font-black text-sm ${bulkType==='zam'?'text-emerald-400':'text-red-400'}`}>₺{newVal.toFixed(2)}</span>
+                                  <span className={`text-xs ml-1 ${bulkType==='zam'?'text-emerald-600':'text-red-600'}`}>{bulkType==='zam'?'+':'-'}{pct}%</span>
+                                </div>
+                              ):<span className="text-zinc-700 text-sm">—</span>}
+                            </td>
+                            <td className="p-4 text-center"><span className={`${stockColor(p.stock||0).badge} text-white text-xs font-black px-2.5 py-1 rounded-full`}>{p.stock||0}</span></td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
           </div>
         )}
 
@@ -1502,8 +1753,8 @@ export default function App(){
               <h2 className="text-3xl font-black">Rapor & Analiz</h2>
               <button onClick={()=>exportParasut(sales)} className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 text-sm shadow-lg shadow-blue-600/20"><FileSpreadsheet size={16}/> Paraşüt'e Aktar</button>
             </div>
-            <div className="flex gap-2 mb-6 bg-zinc-900 p-1.5 rounded-2xl border border-zinc-800 w-fit">
-              {([['genel','Genel'],['gunSonu','Gün Sonu'],['kdv','KDV'],['personel','Personel']] as const).map(([tab,label])=>(
+            <div className="flex flex-wrap gap-2 mb-6 bg-zinc-900 p-1.5 rounded-2xl border border-zinc-800 w-fit">
+              {([['genel','Genel'],['aylik','Aylık Analiz'],['gunSonu','Gün Sonu'],['kdv','KDV'],['parasut','Paraşüt'],['personel','Personel']] as const).map(([tab,label])=>(
                 (tab==='personel'&&currentStaff?.role!=='admin')?null:
                 <button key={tab} onClick={()=>setReportTab(tab)} className={`px-4 py-2.5 rounded-xl font-bold text-sm transition-all ${reportTab===tab?'bg-emerald-500 text-zinc-950':'text-zinc-500 hover:text-white'}`}>{label}</button>
               ))}
@@ -1539,6 +1790,145 @@ export default function App(){
                   </div>
                 </div>
               </>
+            )}
+
+
+            {reportTab==='aylik'&&(
+              <div>
+                <div className="flex items-center gap-4 mb-6">
+                  <label className="text-zinc-400 font-bold text-sm">Ay Seç:</label>
+                  <input type="month" value={reportMonth} onChange={e=>setReportMonth(e.target.value)} className="bg-zinc-900 border border-zinc-700 text-white rounded-xl px-4 py-2.5 outline-none focus:border-emerald-500 text-sm"/>
+                </div>
+                {(()=>{
+                  const [yr,mo]=reportMonth.split('-').map(Number);
+                  const monthSales=sales.filter(s=>{const d=parseDT(s.date);return d.getFullYear()===yr&&d.getMonth()===mo-1&&s.method!=='Tahsilat';});
+                  const monthExp=expenses.filter(e=>{try{const d=new Date(e.date);return d.getFullYear()===yr&&d.getMonth()===mo-1;}catch{return false;}});
+                  const ciro=monthSales.reduce((a,b)=>a+(b.total||0),0);
+                  const cogs=monthSales.reduce((a,b)=>a+(b.totalCost||0),0);
+                  const exp=monthExp.reduce((a,b)=>a+(b.amount||0),0);
+                  const kar=ciro-cogs-exp;
+                  const nakit=monthSales.filter(s=>s.method==='Nakit').reduce((a,b)=>a+(b.total||0),0);
+                  const kart=monthSales.filter(s=>s.method==='Kart').reduce((a,b)=>a+(b.total||0),0);
+                  const veresiye=monthSales.filter(s=>s.method==='Veresiye').reduce((a,b)=>a+(b.total||0),0);
+                  const tahsilat=sales.filter(s=>{const d=parseDT(s.date);return d.getFullYear()===yr&&d.getMonth()===mo-1&&s.method==='Tahsilat';}).reduce((a,b)=>a+(b.total||0),0);
+                  // En çok satan ürünler bu ay
+                  const urunMap:Record<string,{name:string;adet:number;ciro:number}> = {};
+                  monthSales.forEach(s=>(s.items||[]).forEach((item:any)=>{const k=item.name||'?';if(!urunMap[k])urunMap[k]={name:k,adet:0,ciro:0};urunMap[k].adet+=(item.qty||1);urunMap[k].ciro+=(item.grossPrice||0)*(item.qty||1);}));
+                  const topUrunler=Object.values(urunMap).sort((a,b)=>b.ciro-a.ciro).slice(0,10);
+                  return(
+                    <div className="space-y-6">
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-5">
+                        <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"><p className="text-zinc-500 text-xs font-bold uppercase mb-1">Aylık Ciro</p><p className="text-3xl font-black text-emerald-400">₺{ciro.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p><p className="text-zinc-600 text-xs mt-1">{monthSales.length} fatura</p></div>
+                        <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"><p className="text-blue-400 text-xs font-bold uppercase mb-1">SMM</p><p className="text-3xl font-black text-white">₺{cogs.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p></div>
+                        <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"><p className="text-red-400 text-xs font-bold uppercase mb-1">Giderler</p><p className="text-3xl font-black text-white">₺{exp.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p></div>
+                        <div className={`p-5 rounded-2xl border-2 ${kar>=0?'bg-emerald-500/10 border-emerald-500/30':'bg-red-500/10 border-red-500/30'}`}><p className={`text-xs font-bold uppercase mb-1 ${kar>=0?'text-emerald-400':'text-red-400'}`}>Net Kâr</p><p className={`text-3xl font-black ${kar>=0?'text-emerald-400':'text-red-400'}`}>₺{kar.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p>{ciro>0&&<p className="text-zinc-600 text-xs mt-1">Marj: %{(kar/ciro*100).toFixed(1)}</p>}</div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-4">
+                        <div className="bg-emerald-500/10 border border-emerald-500/30 p-4 rounded-2xl"><p className="text-emerald-400 text-xs font-bold uppercase mb-1">💵 Nakit</p><p className="text-2xl font-black text-emerald-400">₺{nakit.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p></div>
+                        <div className="bg-blue-500/10 border border-blue-500/30 p-4 rounded-2xl"><p className="text-blue-400 text-xs font-bold uppercase mb-1">💳 Kart</p><p className="text-2xl font-black text-blue-400">₺{kart.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p></div>
+                        <div className="bg-orange-500/10 border border-orange-500/30 p-4 rounded-2xl"><p className="text-orange-400 text-xs font-bold uppercase mb-1">📋 Veresiye</p><p className="text-2xl font-black text-orange-400">₺{veresiye.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p></div>
+                      </div>
+                      {topUrunler.length>0&&(
+                        <div className="bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden">
+                          <div className="p-5 border-b border-zinc-800 flex justify-between items-center"><h3 className="font-black flex items-center gap-2"><Package size={15} className="text-purple-400"/> Bu Ayın En Çok Satan Ürünleri</h3><span className="text-zinc-600 text-xs">{new Date(yr,mo-1).toLocaleDateString('tr-TR',{month:'long',year:'numeric'})}</span></div>
+                          <table className="w-full text-sm">
+                            <thead className="bg-zinc-950 text-zinc-500 text-xs font-bold uppercase"><tr><th className="p-4 text-left">Ürün</th><th className="p-4 text-center">Adet</th><th className="p-4 text-right">Ciro</th><th className="p-4 text-right">Pay</th></tr></thead>
+                            <tbody className="divide-y divide-zinc-800/50">
+                              {topUrunler.map((u,i)=>(
+                                <tr key={i} className="hover:bg-zinc-800/30">
+                                  <td className="p-4 font-bold text-zinc-300 text-sm">{u.name}</td>
+                                  <td className="p-4 text-center"><span className="bg-purple-500 text-white font-black text-xs px-2.5 py-1 rounded-full">{u.adet}</span></td>
+                                  <td className="p-4 text-right font-black text-white">₺{u.ciro.toLocaleString('tr-TR',{minimumFractionDigits:2})}</td>
+                                  <td className="p-4 text-right">
+                                    <div className="flex items-center justify-end gap-2">
+                                      <div className="w-20 bg-zinc-800 rounded-full h-1.5"><div className="h-1.5 rounded-full bg-emerald-500" style={{width:`${ciro>0?(u.ciro/ciro*100):0}%`}}/></div>
+                                      <span className="text-zinc-500 text-xs">%{ciro>0?(u.ciro/ciro*100).toFixed(1):0}</span>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                      {/* Gün gün tablo */}
+                      <div className="bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden">
+                        <div className="p-5 border-b border-zinc-800"><h3 className="font-black flex items-center gap-2"><CalendarDays size={15} className="text-blue-400"/> Günlük Dökümü</h3></div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead className="bg-zinc-950 text-zinc-500 text-xs font-bold uppercase"><tr><th className="p-4 text-left">Tarih</th><th className="p-4 text-right">Satış Adedi</th><th className="p-4 text-right">Ciro</th><th className="p-4 text-right">Nakit</th><th className="p-4 text-right">Kart</th><th className="p-4 text-right">Veresiye</th></tr></thead>
+                            <tbody className="divide-y divide-zinc-800/50">
+                              {(()=>{
+                                const daysInMonth=new Date(yr,mo,0).getDate();
+                                const rows=[];
+                                for(let d=1;d<=daysInMonth;d++){
+                                  const dateStr=`${String(d).padStart(2,'0')}.${String(mo).padStart(2,'0')}.${yr}`;
+                                  const daySales=monthSales.filter(s=>s.date?.startsWith(dateStr));
+                                  if(daySales.length===0)continue;
+                                  const dCiro=daySales.reduce((a,b)=>a+(b.total||0),0);
+                                  const dNakit=daySales.filter(s=>s.method==='Nakit').reduce((a,b)=>a+(b.total||0),0);
+                                  const dKart=daySales.filter(s=>s.method==='Kart').reduce((a,b)=>a+(b.total||0),0);
+                                  const dVer=daySales.filter(s=>s.method==='Veresiye').reduce((a,b)=>a+(b.total||0),0);
+                                  rows.push(<tr key={d} className="hover:bg-zinc-800/30"><td className="p-4 text-zinc-400 font-mono text-xs">{dateStr}</td><td className="p-4 text-right text-zinc-400">{daySales.length}</td><td className="p-4 text-right font-black text-white">₺{dCiro.toLocaleString('tr-TR',{minimumFractionDigits:2})}</td><td className="p-4 text-right text-emerald-400">₺{dNakit.toLocaleString('tr-TR',{minimumFractionDigits:2})}</td><td className="p-4 text-right text-blue-400">₺{dKart.toLocaleString('tr-TR',{minimumFractionDigits:2})}</td><td className="p-4 text-right text-orange-400">₺{dVer.toLocaleString('tr-TR',{minimumFractionDigits:2})}</td></tr>);
+                                }
+                                return rows;
+                              })()}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
+            {reportTab==='parasut'&&(
+              <div className="space-y-6">
+                <div className="bg-blue-500/10 border border-blue-500/30 rounded-2xl p-5">
+                  <h3 className="font-black text-white text-lg mb-1 flex items-center gap-2"><FileSpreadsheet size={18} className="text-blue-400"/> Paraşüt Tam Entegrasyon</h3>
+                  <p className="text-zinc-400 text-sm">Satışlarınızı Paraşüt uyumlu Excel formatında dışa aktarın. Ayarları bir kez yapın, her seferinde otomatik kullanılır.</p>
+                </div>
+                {/* Paraşüt ayarları */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl">
+                    <h4 className="font-black text-lg mb-4 border-b border-zinc-800 pb-3 flex items-center gap-2"><Settings size={15} className="text-zinc-400"/> Paraşüt Ayarları</h4>
+                    <div className="space-y-4">
+                      <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Firma Ünvanı (Paraşüt'teki adınız)</label><input value={parasutFirm} onChange={e=>{setParasutFirm(e.target.value);localStorage.setItem('parasutFirm',e.target.value);}} placeholder="ör. MERKEZ ŞUBE TİC. LTD. ŞTİ." className="w-full bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-blue-500 text-sm"/></div>
+                      <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Çıkış Deposu</label><input value={parasutDepot} onChange={e=>{setParasutDepot(e.target.value);localStorage.setItem('parasutDepot',e.target.value);}} placeholder="ör. Merkez Depo" className="w-full bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-blue-500 text-sm"/></div>
+                      <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-2">
+                        <p className="text-zinc-400 text-xs font-bold uppercase">KDV Normalizasyon Kuralları</p>
+                        <div className="flex flex-wrap gap-2 text-xs">
+                          {[['%8 → %10','KDV reform'],['%18 → %20','KDV reform'],['%0, %1, %10, %20','Paraşüt kabul eder']].map(([k,v])=>(
+                            <div key={k} className="bg-zinc-900 border border-zinc-800 px-3 py-2 rounded-lg"><span className="font-black text-white">{k}</span><span className="text-zinc-500 ml-1">{v}</span></div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl">
+                    <h4 className="font-black text-lg mb-4 border-b border-zinc-800 pb-3">Dışa Aktarma Seçenekleri</h4>
+                    <div className="space-y-3">
+                      {[
+                        {label:'Tüm Satışlar',desc:`${sales.filter(s=>s.method!=='Tahsilat').length} fatura`,action:()=>exportParasut(sales.filter(s=>s.method!=='Tahsilat'),`parasut_tum_${new Date().toISOString().slice(0,10)}.xlsx`),color:'bg-blue-600 hover:bg-blue-500'},
+                        {label:'Bu Ay',desc:`${sales.filter(s=>{const d=parseDT(s.date);const now=new Date();return d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth()&&s.method!=='Tahsilat';}).length} fatura`,action:()=>{const now=new Date();const m=sales.filter(s=>{const d=parseDT(s.date);return d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth()&&s.method!=='Tahsilat';});exportParasut(m,`parasut_${now.getFullYear()}_${String(now.getMonth()+1).padStart(2,'0')}.xlsx`);},color:'bg-emerald-600 hover:bg-emerald-500'},
+                        {label:`Seçili Ay (${reportMonth})`,desc:(()=>{const[yr,mo]=reportMonth.split('-').map(Number);return sales.filter(s=>{const d=parseDT(s.date);return d.getFullYear()===yr&&d.getMonth()===mo-1&&s.method!=='Tahsilat';}).length+' fatura';})(),action:()=>{const[yr,mo]=reportMonth.split('-').map(Number);const m=sales.filter(s=>{const d=parseDT(s.date);return d.getFullYear()===yr&&d.getMonth()===mo-1&&s.method!=='Tahsilat';});exportParasut(m,`parasut_${reportMonth}.xlsx`);},color:'bg-purple-600 hover:bg-purple-500'},
+                      ].map((opt,i)=>(
+                        <button key={i} onClick={opt.action} className={`w-full ${opt.color} text-white p-4 rounded-2xl font-black flex items-center justify-between shadow-lg text-sm transition-all`}>
+                          <div className="flex items-center gap-3"><FileSpreadsheet size={18}/><div className="text-left"><div>{opt.label}</div><div className="text-xs opacity-70 font-normal">{opt.desc}</div></div></div>
+                          <Download size={16}/>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="mt-4 bg-zinc-950 border border-zinc-800 rounded-xl p-4">
+                      <p className="text-zinc-500 text-xs font-bold uppercase mb-2">Paraşüt'e Aktar Adımları</p>
+                      <ol className="text-zinc-400 text-xs space-y-1.5">
+                        {['Excel dosyasını indirin','Paraşüt → Satış Faturaları → İçeri Al','İndirilen dosyayı seçin','Önizlemeyi kontrol edip onaylayın'].map((s,i)=><li key={i} className="flex items-start gap-2"><span className="text-emerald-400 font-black shrink-0">{i+1}.</span>{s}</li>)}
+                      </ol>
+                    </div>
+                  </div>
+                </div>
+              </div>
             )}
 
             {reportTab==='gunSonu'&&(
@@ -1711,8 +2101,48 @@ export default function App(){
         )}
 
         {/* ═══ FİŞ TASARIMI ═══════════════════════════════════════════════ */}
-        {activePage==='receipt'&&(
-          <div className="flex w-full overflow-hidden">
+        {(activePage==='settings'||activePage==='receipt')&&(
+          <div className="flex flex-col w-full overflow-hidden">
+            {/* Ayarlar sekme başlığı */}
+            <div className="border-b border-zinc-800 bg-zinc-900 px-6 pt-4 flex items-center justify-between shrink-0">
+              <div className="flex gap-1">
+                {([['fis','🖨️ Fiş Tasarımı'],['parasut','📊 Paraşüt Ayarları']] as const).map(([tab,label])=>(
+                  <button key={tab} onClick={()=>setSettingsTab(tab)} className={`px-5 py-3 font-bold text-sm border-b-2 transition-all mr-1 ${settingsTab===tab?'border-emerald-500 text-emerald-400':'border-transparent text-zinc-500 hover:text-zinc-300'}`}>{label}</button>
+                ))}
+              </div>
+              <h1 className="text-base font-black text-zinc-400 mb-3 flex items-center gap-2"><Settings size={15}/> Ayarlar</h1>
+            </div>
+            {settingsTab==='parasut'&&(
+              <div className="flex-1 overflow-y-auto p-7">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl">
+                    <h4 className="font-black text-lg mb-4 border-b border-zinc-800 pb-3 flex items-center gap-2"><Settings size={15} className="text-zinc-400"/> Paraşüt Bağlantı Ayarları</h4>
+                    <div className="space-y-4">
+                      <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Firma Ünvanı</label><input value={parasutFirm} onChange={e=>{setParasutFirm(e.target.value);localStorage.setItem('parasutFirm',e.target.value);}} placeholder="ör. MERKEZ ŞUBE TİC. LTD. ŞTİ." className="w-full bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-blue-500 text-sm"/><p className="text-zinc-600 text-xs">Paraşüt'teki firma adınızla tam eşleşmeli</p></div>
+                      <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Çıkış Deposu</label><input value={parasutDepot} onChange={e=>{setParasutDepot(e.target.value);localStorage.setItem('parasutDepot',e.target.value);}} placeholder="ör. Merkez Depo" className="w-full bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-blue-500 text-sm"/></div>
+                      <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4 text-xs text-blue-300 space-y-1">
+                        <p className="font-black">KDV Normalizasyon:</p>
+                        <p>%8 → %10 · %18 → %20 (2023 reform uyumlu)</p>
+                        <p>Tüm satışlar "Fatura" türünde aktarılır</p>
+                      </div>
+                      <button onClick={()=>exportParasut(sales.filter(s=>s.method!=='Tahsilat'))} className="w-full bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-xl font-black flex items-center justify-center gap-2 text-sm"><FileSpreadsheet size={16}/> Tüm Satışları Dışa Aktar</button>
+                    </div>
+                  </div>
+                  <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl">
+                    <h4 className="font-black text-lg mb-4 border-b border-zinc-800 pb-3">Hızlı Dışa Aktarma</h4>
+                    <div className="space-y-3">
+                      {[
+                        {label:'Bu Ay',color:'bg-emerald-600',action:()=>{const now=new Date();exportParasut(sales.filter(s=>{const d=parseDT(s.date);return d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth()&&s.method!=='Tahsilat';}),`parasut_${now.getFullYear()}_${String(now.getMonth()+1).padStart(2,'0')}.xlsx`);}},
+                        {label:'Geçen Ay',color:'bg-zinc-700',action:()=>{const now=new Date();const prev=new Date(now.getFullYear(),now.getMonth()-1,1);exportParasut(sales.filter(s=>{const d=parseDT(s.date);return d.getFullYear()===prev.getFullYear()&&d.getMonth()===prev.getMonth()&&s.method!=='Tahsilat';}),`parasut_${prev.getFullYear()}_${String(prev.getMonth()+1).padStart(2,'0')}.xlsx`);}},
+                        {label:'Bu Yıl',color:'bg-purple-600',action:()=>{const yr=new Date().getFullYear();exportParasut(sales.filter(s=>{const d=parseDT(s.date);return d.getFullYear()===yr&&s.method!=='Tahsilat';}),`parasut_${yr}.xlsx`);}},
+                      ].map((opt,i)=><button key={i} onClick={opt.action} className={`w-full ${opt.color} text-white p-4 rounded-xl font-black flex items-center justify-between text-sm`}><span>{opt.label}</span><Download size={15}/></button>)}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            {settingsTab==='fis'&&(
+            <div className="flex flex-1 overflow-hidden">
             <div className="w-[355px] shrink-0 bg-zinc-900 border-r border-zinc-800 flex flex-col overflow-hidden">
               <div className="p-4 border-b border-zinc-800 flex items-center justify-between shrink-0"><div><h2 className="text-base font-black flex items-center gap-2"><Palette size={15} className="text-emerald-500"/> Fiş Tasarımı</h2><p className="text-zinc-500 text-xs">Canlı önizleme sağda</p></div><button onClick={()=>setDraftSettings({...DEFAULT_SETTINGS})} className="text-zinc-500 hover:text-white bg-zinc-800 p-1.5 rounded-xl border border-zinc-700"><RotateCcw size={12}/></button></div>
               <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -1731,9 +2161,13 @@ export default function App(){
               <div className="flex items-center gap-2 mb-4"><Eye size={12} className="text-emerald-500"/><span className="text-zinc-400 font-bold text-sm uppercase">Önizleme</span><span className="bg-zinc-800 text-zinc-400 text-xs font-bold px-2.5 py-1 rounded-lg border border-zinc-700 ml-2">{PAPER_LABELS[draftSettings.paperSize]}</span></div>
               <div className="bg-zinc-800/30 rounded-2xl p-5 flex justify-center"><div className="bg-white rounded-xl shadow-2xl shadow-black/60 overflow-hidden" style={{width:`${Math.min(PAPER_WIDTHS[draftSettings.paperSize],580)}px`}}><ReceiptTemplate sale={demoSale} settings={draftSettings} preview={true}/></div></div>
             </div>
+            </div>
+            </div>
+            )}
           </div>
         )}
 
+        </div>
       </main>
 
       {/* ═══ MODALLER ═══════════════════════════════════════════════════ */}
@@ -1873,6 +2307,125 @@ export default function App(){
                 <button type="submit" className="flex-1 bg-emerald-500 text-zinc-950 py-3.5 rounded-xl font-black flex items-center justify-center gap-2 text-sm shadow-lg shadow-emerald-500/20"><Save size={16}/> Yetkileri Kaydet</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+
+      {/* ═══ VARYANT MODAL ════════════════════════════════════════════════ */}
+      {variantProduct&&(
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-[300] p-4">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-[32px] w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-in zoom-in duration-300">
+            <div className="p-6 border-b border-zinc-800 bg-zinc-950/50 flex justify-between items-center shrink-0">
+              <div>
+                <h3 className="text-xl font-black text-white flex items-center gap-2"><Boxes size={18} className="text-purple-400"/> Varyant Yönetimi</h3>
+                <p className="text-zinc-500 text-sm mt-0.5 font-bold text-purple-400">{variantProduct.name}</p>
+              </div>
+              <button onClick={()=>setVariantProduct(null)} className="text-zinc-500 hover:text-white bg-zinc-800 p-2 rounded-xl"><X size={18}/></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="space-y-1.5 flex-1">
+                  <label className="text-xs font-bold text-zinc-500 uppercase">Varyant Grubu Adı</label>
+                  <input value={variantGroupName} onChange={e=>setVariantGroupName(e.target.value)} placeholder="ör. Renk, Beden, Model..." className="w-full bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-purple-500 text-sm"/>
+                </div>
+              </div>
+              <div className="bg-zinc-950 border border-zinc-800 rounded-2xl overflow-hidden">
+                <div className="grid grid-cols-12 gap-0 bg-zinc-900 text-zinc-500 text-xs font-bold uppercase p-3 border-b border-zinc-800">
+                  <div className="col-span-5">Varyant Adı</div>
+                  <div className="col-span-4">Barkod</div>
+                  <div className="col-span-2 text-center">Stok</div>
+                  <div className="col-span-1"></div>
+                </div>
+                <div className="divide-y divide-zinc-800/50">
+                  {variantDraft.map((v,i)=>(
+                    <div key={i} className="grid grid-cols-12 gap-2 p-3 items-center">
+                      <div className="col-span-5"><input value={v.name} onChange={e=>{const n=[...variantDraft];n[i]={...n[i],name:e.target.value};setVariantDraft(n);}} placeholder="ör. Kırmızı / S / 42" className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded-xl outline-none focus:border-purple-500 text-sm font-bold"/></div>
+                      <div className="col-span-4"><input value={v.barcode} onChange={e=>{const n=[...variantDraft];n[i]={...n[i],barcode:e.target.value};setVariantDraft(n);}} placeholder="Barkod..." className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded-xl outline-none text-sm font-mono"/></div>
+                      <div className="col-span-2"><input type="number" min="0" value={v.stock} onChange={e=>{const n=[...variantDraft];n[i]={...n[i],stock:e.target.value};setVariantDraft(n);}} className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded-xl outline-none text-center font-black text-sm"/></div>
+                      <div className="col-span-1 flex justify-center"><button onClick={()=>setVariantDraft(variantDraft.filter((_,ii)=>ii!==i))} className="text-zinc-600 hover:text-red-500"><X size={14}/></button></div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <button onClick={()=>setVariantDraft([...variantDraft,{name:'',barcode:'',stock:''}])} className="flex items-center gap-2 text-purple-400 hover:text-purple-300 text-sm font-bold"><Plus size={14}/> Varyant Ekle</button>
+              <div className="bg-purple-500/10 border border-purple-500/30 rounded-xl p-4">
+                <p className="text-purple-300 text-xs font-bold">💡 İpucu:</p>
+                <p className="text-zinc-400 text-xs mt-1">Her varyant için ayrı barkod girebilirsiniz. Barkod okutunca direkt o varyant sepete eklenir. Stok varyant bazında takip edilir.</p>
+              </div>
+            </div>
+            <div className="p-6 border-t border-zinc-800 shrink-0 flex gap-3">
+              <button onClick={()=>setVariantProduct(null)} className="flex-1 bg-zinc-800 text-zinc-400 py-3.5 rounded-xl font-bold border border-zinc-700 text-sm">İptal</button>
+              <button onClick={handleSaveVariants} className="flex-1 bg-purple-600 hover:bg-purple-500 text-white py-3.5 rounded-xl font-black flex items-center justify-center gap-2 text-sm"><Save size={16}/> Kaydet</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ FİYAT GEÇMİŞİ MODAL ══════════════════════════════════════════ */}
+      {priceHistoryProduct&&(
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-[300] p-4">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-[32px] w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-in zoom-in duration-300">
+            <div className="p-6 border-b border-zinc-800 bg-zinc-950/50 flex justify-between items-center shrink-0">
+              <div>
+                <h3 className="text-xl font-black text-white flex items-center gap-2"><TrendingUp size={18} className="text-yellow-400"/> Fiyat Geçmişi & Maliyet Analizi</h3>
+                <p className="text-yellow-400 text-sm font-bold mt-0.5">{priceHistoryProduct.name}</p>
+              </div>
+              <button onClick={()=>{setPriceHistoryProduct(null);setPriceHistory([]);}} className="text-zinc-500 hover:text-white bg-zinc-800 p-2 rounded-xl"><X size={18}/></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6 space-y-5">
+              {/* Anlık fiyat özeti */}
+              <div className="grid grid-cols-3 gap-4">
+                <div className="bg-blue-500/10 border border-blue-500/30 p-4 rounded-2xl">
+                  <p className="text-blue-400 text-xs font-bold uppercase mb-1">Alış Fiyatı</p>
+                  <p className="text-2xl font-black text-white">₺{(priceHistoryProduct.costPrice||0).toFixed(2)}</p>
+                </div>
+                <div className="bg-emerald-500/10 border border-emerald-500/30 p-4 rounded-2xl">
+                  <p className="text-emerald-400 text-xs font-bold uppercase mb-1">Satış Fiyatı</p>
+                  <p className="text-2xl font-black text-white">₺{(priceHistoryProduct.grossPrice||0).toFixed(2)}</p>
+                </div>
+                <div className={`p-4 rounded-2xl border-2 ${((priceHistoryProduct.grossPrice||0)-(priceHistoryProduct.costPrice||0))>0?'bg-emerald-500/10 border-emerald-500/40':'bg-red-500/10 border-red-500/40'}`}>
+                  <p className={`text-xs font-bold uppercase mb-1 ${((priceHistoryProduct.grossPrice||0)-(priceHistoryProduct.costPrice||0))>0?'text-emerald-400':'text-red-400'}`}>Kâr Marjı</p>
+                  <p className={`text-2xl font-black ${((priceHistoryProduct.grossPrice||0)-(priceHistoryProduct.costPrice||0))>0?'text-emerald-400':'text-red-400'}`}>
+                    {priceHistoryProduct.costPrice>0?`%${(((priceHistoryProduct.grossPrice||0)-(priceHistoryProduct.costPrice||0))/(priceHistoryProduct.costPrice||1)*100).toFixed(1)}`:'—'}
+                  </p>
+                  <p className="text-zinc-500 text-xs mt-0.5">₺{((priceHistoryProduct.grossPrice||0)-(priceHistoryProduct.costPrice||0)).toFixed(2)} kâr/adet</p>
+                </div>
+              </div>
+              {/* Fiyat değişim grafiği */}
+              {priceHistory.filter(h=>h.field==='grossPrice').length>1&&(
+                <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4">
+                  <p className="text-zinc-400 font-bold text-sm mb-3">Satış Fiyatı Trendi</p>
+                  <ResponsiveContainer width="100%" height={140}>
+                    <LineChart data={[...priceHistory.filter(h=>h.field==='grossPrice')].reverse()}>
+                      <XAxis dataKey="date" tick={{fill:'#71717a',fontSize:10}} tickLine={false} axisLine={false} tickFormatter={v=>v.split(' ')[0]}/>
+                      <YAxis tick={{fill:'#71717a',fontSize:10}} tickLine={false} axisLine={false} tickFormatter={v=>`₺${v}`}/>
+                      <Tooltip contentStyle={{background:'#18181b',border:'1px solid #3f3f46',borderRadius:8,color:'#fff',fontSize:12}} formatter={(v:any)=>[`₺${Number(v).toFixed(2)}`,'Fiyat']}/>
+                      <Line type="stepAfter" dataKey="newVal" stroke="#f59e0b" strokeWidth={2.5} dot={{r:4,fill:'#f59e0b'}} name="Fiyat"/>
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+              {/* Geçmiş listesi */}
+              <div>
+                <p className="text-zinc-400 font-bold text-sm mb-3">Değişim Geçmişi</p>
+                {priceHistoryLoading?<div className="text-zinc-600 text-center py-6 font-bold">Yükleniyor...</div>:
+                priceHistory.length===0?<div className="text-zinc-600 text-center py-6 font-bold text-sm">Bu ürün için fiyat değişikliği kaydı yok.<br/><span className="text-xs text-zinc-700">Toplu Fiyat Güncelleme ile yapılan değişiklikler burada görünür.</span></div>:(
+                  <div className="space-y-2">
+                    {priceHistory.map((h,i)=>(
+                      <div key={i} className="flex items-center gap-4 bg-zinc-950 border border-zinc-800 rounded-xl p-4">
+                        <div className={`shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-sm ${h.type==='zam'?'bg-emerald-500/20 text-emerald-400':'bg-red-500/20 text-red-400'}`}>{h.type==='zam'?'↑':'↓'}</div>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2"><span className="font-bold text-white text-sm">{h.field==='grossPrice'?'Satış Fiyatı':'Alış Fiyatı'}</span><span className={`text-xs font-bold px-2 py-0.5 rounded-full ${h.type==='zam'?'bg-emerald-500/20 text-emerald-400':'bg-red-500/20 text-red-400'}`}>{h.type==='zam'?'+':'−'}%{h.pct}</span></div>
+                          <div className="text-zinc-500 text-xs mt-0.5">{h.date}{h.staffName&&` · ${h.staffName}`}</div>
+                        </div>
+                        <div className="text-right"><div className="text-zinc-500 text-sm line-through">₺{(h.oldVal||0).toFixed(2)}</div><div className={`font-black text-lg ${h.type==='zam'?'text-emerald-400':'text-red-400'}`}>₺{(h.newVal||0).toFixed(2)}</div></div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}
