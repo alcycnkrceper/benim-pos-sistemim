@@ -7,18 +7,29 @@ import {
   Zap, Phone, Percent, Download, Upload, FileSpreadsheet, CalendarDays,
   Square, SquareCheck, Save, RotateCcw, Building2, MapPin, Hash, AlignLeft,
   Palette, Eye, Boxes, AlertTriangle, ArrowDownToLine, ChevronDown,
-  ClipboardCheck, FolderOpen, Pencil, ArrowUpDown, Ban, ShoppingBag,
+  Pencil, ArrowUpDown, Ban, ShoppingBag,
   FileText, Receipt, MessageSquare, Filter, LogIn, LogOut, UserCog,
-  Shield, RefreshCw, ArrowLeftRight, Tag, Clock, UserCheck, Key,
-  SendHorizonal, Activity, Columns, Settings
+  Shield, RefreshCw, Tag
 } from 'lucide-react';
 
-// ─── Safe icon aliases ─────────────────────────────────────────────────────
+// ─── Guaranteed-safe icon aliases ──────────────────────────────────────────
 const FileEdit = FileText;
+const FolderOpen = Boxes;
+const ClipboardCheck = CheckCircle;
+const UserCheck = Users;
+const SendHorizonal = ArrowUpDown;
+const ArrowLeftRight = ArrowUpDown;
+const Clock = Eye;
+const Key = Shield;
+const Activity = BarChart3;
+const Columns = ArrowUpDown;
+const Settings = UserCog;
+const SplitSquareHorizontal = Columns;
 const CheckCircle2 = CheckCircle;
 const Handshake = Users;
 const BadgePercent = Tag;
-const SplitSquareHorizontal = Columns;
+
+// ─── Safe icon aliases ─────────────────────────────────────────────────────
 
 // ─── XLSX CDN ──────────────────────────────────────────────────────────────
 function loadXLSX(): Promise<any> {
@@ -1452,7 +1463,7 @@ export default function App(){
                   {filteredStockProducts.map(p=>{
                     const sc=stockColor(p.stock||0);
                     const maxS=Math.max(...products.map(pp=>pp.stock||0),1);
-                    const pct=Math.min(100,((p.stock||0)/maxS)*100);
+                    const pct=maxS>0?Math.min(100,Math.round((p.stock||0)*100/maxS)):0;
                     return(
                       <div key={p.id} className={`border rounded-2xl p-4 flex items-center gap-5 ${sc.ring}`}>
                         <div className="flex-1 min-w-0">
@@ -1845,7 +1856,7 @@ export default function App(){
                                   <td className="p-4 text-right">
                                     <div className="flex items-center justify-end gap-2">
                                       <div className="w-20 bg-zinc-800 rounded-full h-1.5"><div className="h-1.5 rounded-full bg-emerald-500" style={{width:`${ciro>0?(u.ciro/ciro*100):0}%`}}/></div>
-                                      <span className="text-zinc-500 text-xs">%{ciro>0?(u.ciro/ciro*100).toFixed(1):0}</span>
+                                      <span className="text-zinc-500 text-xs">%{ciro>0?(ciro>0?(u.ciro*100/ciro):0).toFixed(1):0}</span>
                                     </div>
                                   </td>
                                 </tr>
