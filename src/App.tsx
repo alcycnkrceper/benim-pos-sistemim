@@ -345,6 +345,7 @@ export default function App(){
   const [cameraScanError,setCameraScanError]=useState('');
   const [cameraLastDetected,setCameraLastDetected]=useState('');
   const [cameraManualBarcode,setCameraManualBarcode]=useState('');
+  const [cameraRestartKey,setCameraRestartKey]=useState(0);
   const cameraVideoRef=useRef<HTMLVideoElement>(null);
   const cameraStreamRef=useRef<MediaStream|null>(null);
   const cameraFrameRef=useRef<number|null>(null);
@@ -597,18 +598,22 @@ export default function App(){
               try{
                 const cams=await Html5Qrcode.getCameras?.();
                 if(Array.isArray(cams)&&cams.length){
-                  const scored=[...cams].sort((a:any,b:any)=>{
+                  const scored=[...cams].map((cam:any,idx:number)=>({cam,idx})).sort((a:any,b:any)=>{
                     const score=(label:string)=>{
                       const s=(label||'').toLowerCase();
-                      if(/front|user|selfie|ön/.test(s)) return -1;
-                      return /back|rear|environment|arka/.test(s)?2:/wide/.test(s)?1:0;
+                      if(/front|user|selfie|ön/.test(s)) return -100;
+                      if(/back|rear|environment|arka|world/.test(s)) return 100;
+                      if(/wide|ultra|tele|main/.test(s)) return 10;
+                      return 0;
                     };
-                    return score(b.label)-score(a.label);
+                    const sa=score(a.cam?.label||'');
+                    const sb=score(b.cam?.label||'');
+                    if(sb!==sa) return sb-sa;
+                    return b.idx-a.idx;
                   });
-                  scored.forEach((c:any)=>{if(c?.id) sources.push(c.id);});
+                  scored.forEach((r:any)=>{if(r.cam?.id) sources.push(r.cam.id);});
                 }
               }catch{}
-              sources.push({facingMode:'user'});
               let html5Started=false;
               for(const s of sources){
                 try{
@@ -653,11 +658,20 @@ export default function App(){
               if(cams.length){
                 const score=(label:string)=>{
                   const s=(label||'').toLowerCase();
-                  if(/front|user|selfie|ön/.test(s)) return -1;
-                  if(/back|rear|environment|arka/.test(s)) return 2;
+                  if(/front|user|selfie|ön/.test(s)) return -100;
+                  if(/back|rear|environment|arka|world/.test(s)) return 100;
+                  if(/wide|ultra|tele|main/.test(s)) return 10;
                   return 0;
                 };
-                cams.sort((a,b)=>score(b.label)-score(a.label));
+                cams.sort((a,b)=>{
+                  const sa=score(a.label||'');
+                  const sb=score(b.label||'');
+                  if(sb!==sa) return sb-sa;
+                  return 0;
+                });
+                if(cams.length>1&&score(cams[0].label||'')===score(cams[1].label||'')){
+                  cams.reverse();
+                }
                 preferredVideoId=cams[0]?.deviceId||undefined;
               }
             }catch{}
@@ -804,7 +818,7 @@ export default function App(){
       active=false;
       stopCameraScan();
     };
-  },[cameraScanOpen,products]);
+  },[cameraScanOpen,products,cameraRestartKey]);
 
   useEffect(()=>{
     if(activePage==='stock.count'){
@@ -1486,7 +1500,7 @@ export default function App(){
             <div className="flex-1 p-5 flex flex-col overflow-hidden">
               <div className="flex items-center gap-3 mb-4">
                 <div className="relative flex-1"><Search className="absolute left-3.5 top-3 text-zinc-500" size={16}/><input type="text" value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Ürün adı veya barkod..." className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl py-3 pl-11 pr-4 outline-none focus:border-emerald-500 text-sm"/></div>
-                <button onClick={()=>{setCameraScanError('');setCameraLastDetected('');setCameraManualBarcode('');setCameraMode('init');setCameraScanOpen(true);}} className="px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-2 border bg-zinc-800 text-zinc-300 border-zinc-700 hover:border-emerald-400 hover:text-emerald-400 transition-all"><Camera size={15}/> Kameradan</button>
+                <button onClick={()=>{setCameraScanError('');setCameraLastDetected('');setCameraManualBarcode('');setCameraMode('init');setCameraRestartKey(v=>v+1);setCameraScanOpen(true);}} className="px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-2 border bg-zinc-800 text-zinc-300 border-zinc-700 hover:border-emerald-400 hover:text-emerald-400 transition-all"><Camera size={15}/> Kameradan</button>
                 <button onClick={()=>setOrderMode(!orderMode)} className={'px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-2 border transition-all '+(orderMode?'bg-orange-500 text-zinc-950 border-orange-500':'bg-zinc-800 text-zinc-400 border-zinc-700 hover:border-orange-400 hover:text-orange-400')}><ShoppingBag size={15}/>{orderMode?'Sipariş Modu':'Sipariş Oluştur'}</button>
               </div>
               {orderMode&&(
@@ -2897,6 +2911,7 @@ export default function App(){
                 <input value={cameraManualBarcode} onChange={e=>setCameraManualBarcode(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&addProductByBarcode(cameraManualBarcode)){setCameraScanOpen(false);setCameraManualBarcode('');setCameraLastDetected('');}}} placeholder="Manuel barkod gir" className="flex-1 bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-emerald-500 text-sm font-mono"/>
                 <button onClick={()=>{if(addProductByBarcode(cameraManualBarcode)){setCameraScanOpen(false);setCameraManualBarcode('');setCameraLastDetected('');}}} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-4 rounded-xl font-black text-sm">Ekle</button>
               </div>
+              <button onClick={()=>{setCameraScanError('');setCameraLastDetected('');setCameraMode('init');setCameraRestartKey(v=>v+1);}} className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-2.5 rounded-xl font-bold text-sm border border-zinc-700">Arka Kamerayı Tekrar Dene</button>
               <p className="text-zinc-500 text-xs">Kamera açılmazsa linki WhatsApp/Instagram içinden değil, doğrudan Safari/Chrome’da aç.</p>
               <button onClick={()=>{setCameraScanOpen(false);setCameraManualBarcode('');setCameraLastDetected('');setCameraMode('init');}} className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-3 rounded-xl font-bold text-sm">Kapat</button>
             </div>
