@@ -301,6 +301,7 @@ export default function App(){
   const [mergedPrint,setMergedPrint]=useState<any>(null);
   const [cameraScanOpen,setCameraScanOpen]=useState(false);
   const [cameraScanError,setCameraScanError]=useState('');
+  const [cameraManualBarcode,setCameraManualBarcode]=useState('');
   const cameraVideoRef=useRef<HTMLVideoElement>(null);
   const cameraStreamRef=useRef<MediaStream|null>(null);
   const cameraFrameRef=useRef<number|null>(null);
@@ -453,6 +454,121 @@ export default function App(){
     return()=>{window.removeEventListener('keydown',hk);if(bufTimer)clearTimeout(bufTimer);};
   },[products]);
 
+  const stopCameraScan=()=>{
+    if(cameraFrameRef.current!==null){
+      cancelAnimationFrame(cameraFrameRef.current);
+      cameraFrameRef.current=null;
+    }
+    if(cameraStreamRef.current){
+      cameraStreamRef.current.getTracks().forEach(t=>t.stop());
+      cameraStreamRef.current=null;
+    }
+    if(cameraVideoRef.current){
+      cameraVideoRef.current.srcObject=null;
+    }
+    cameraBusyRef.current=false;
+  };
+
+  useEffect(()=>{
+    if(!cameraScanOpen) return;
+    let active=true;
+    setCameraScanError('');
+
+    const start=async()=>{
+      try{
+        if(!window.isSecureContext){
+          setCameraScanError('Kamera için HTTPS gerekir. Vercel linkini https:// ile açın.');
+          return;
+        }
+        if(!navigator.mediaDevices?.getUserMedia){
+          setCameraScanError('Bu cihazda kamera erişimi desteklenmiyor.');
+          return;
+        }
+        const tryConstraints:MediaStreamConstraints[]=[
+          {video:{facingMode:{exact:'environment'}},audio:false},
+          {video:{facingMode:{ideal:'environment'}},audio:false},
+          {video:true,audio:false},
+        ];
+        let stream:MediaStream|null=null;
+        let lastErr:any=null;
+        for(const constraints of tryConstraints){
+          try{
+            stream=await navigator.mediaDevices.getUserMedia(constraints);
+            break;
+          }catch(err){
+            lastErr=err;
+          }
+        }
+        if(!stream) throw lastErr||new Error('Kamera açılamadı');
+        if(!active){
+          stream.getTracks().forEach(t=>t.stop());
+          return;
+        }
+        cameraStreamRef.current=stream;
+        if(cameraVideoRef.current){
+          cameraVideoRef.current.srcObject=stream;
+          await cameraVideoRef.current.play().catch(()=>{});
+        }
+
+        const DetectorCtor=(window as any).BarcodeDetector;
+        if(!DetectorCtor){
+          setCameraScanError('Kamera açıldı. Otomatik barkod için Chrome/Edge kullanın veya alttan barkodu manuel girin.');
+          return;
+        }
+        const detector=new DetectorCtor({
+          formats:['ean_13','ean_8','code_128','code_39','upc_a','upc_e','qr_code']
+        });
+
+        const tick=async()=>{
+          if(!active||!cameraVideoRef.current) return;
+          if(cameraBusyRef.current){
+            cameraFrameRef.current=requestAnimationFrame(tick);
+            return;
+          }
+          cameraBusyRef.current=true;
+          try{
+            const codes=await detector.detect(cameraVideoRef.current);
+            const raw=(codes?.[0]?.rawValue||'').trim();
+            if(raw){
+              if(addProductByBarcode(raw)){
+                setCameraScanOpen(false);
+                return;
+              }
+            }
+          }catch{
+            // Kamerada geçici decode hataları normaldir; sessiz geç.
+          }finally{
+            cameraBusyRef.current=false;
+            if(active) cameraFrameRef.current=requestAnimationFrame(tick);
+          }
+        };
+
+        cameraFrameRef.current=requestAnimationFrame(tick);
+      }catch(err:any){
+        const name=String(err?.name||'');
+        if(name==='NotAllowedError'||name==='SecurityError'){
+          setCameraScanError('Kamera izni reddedildi. Tarayıcı ayarlarından kamera iznini Açık yapın.');
+          return;
+        }
+        if(name==='NotReadableError'){
+          setCameraScanError('Kamera başka bir uygulama tarafından kullanılıyor. Diğer uygulamaları kapatıp tekrar deneyin.');
+          return;
+        }
+        if(name==='NotFoundError'||name==='OverconstrainedError'){
+          setCameraScanError('Uygun kamera bulunamadı. Ön/arka kamera arasında değiştirip tekrar deneyin.');
+          return;
+        }
+        setCameraScanError('Kamera açılamadı. Linki doğrudan Safari/Chrome’da açıp tekrar deneyin.');
+      }
+    };
+
+    start();
+    return ()=>{
+      active=false;
+      stopCameraScan();
+    };
+  },[cameraScanOpen,products]);
+
   useEffect(()=>{
     if(activePage==='stock.count'){
       const d:Record<string,string>={};
@@ -500,6 +616,25 @@ export default function App(){
 
   // ── Cart ──────────────────────────────────────────────────────────────
   const addToCart=(p:any)=>{setCart(prev=>{const ex=prev.find((i:any)=>i.id===p.id);if(ex)return prev.map((i:any)=>i.id===p.id?{...i,qty:i.qty+1}:i);return[...prev,{...p,qty:1}];});setSearchQuery('');};
+  const addProductByBarcode=(rawCode:string)=>{
+    const code=(rawCode||'').trim();
+    if(!code){
+      setCameraScanError('Barkod boş olamaz.');
+      return false;
+    }
+    const found=products.find((p:any)=>String(p.barcode||'').trim()===code);
+    if(!found){
+      setCameraScanError('Bu barkod sistemde kayıtlı değil: '+code);
+      return false;
+    }
+    setActivePage('pos');
+    addToCart(found);
+    setFlash(true);
+    setTimeout(()=>setFlash(false),300);
+    setSearchQuery('');
+    setCameraScanError('');
+    return true;
+  };
   const rawTotal=cart.reduce((t:number,i:any)=>t+((i.grossPrice||0)*i.qty),0);
   const totalCostCart=cart.reduce((t:number,i:any)=>t+((i.costPrice||0)*i.qty),0);
   const discountVal=parseFloat(discountPct)||0;
@@ -1080,6 +1215,7 @@ export default function App(){
             <div className="flex-1 p-5 flex flex-col overflow-hidden">
               <div className="flex items-center gap-3 mb-4">
                 <div className="relative flex-1"><Search className="absolute left-3.5 top-3 text-zinc-500" size={16}/><input type="text" value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Ürün adı veya barkod..." className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl py-3 pl-11 pr-4 outline-none focus:border-emerald-500 text-sm"/></div>
+                <button onClick={()=>{setCameraScanError('');setCameraManualBarcode('');setCameraScanOpen(true);}} className="px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-2 border bg-zinc-800 text-zinc-300 border-zinc-700 hover:border-emerald-400 hover:text-emerald-400 transition-all"><Camera size={15}/> Kameradan</button>
                 <button onClick={()=>setOrderMode(!orderMode)} className={'px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-2 border transition-all '+(orderMode?'bg-orange-500 text-zinc-950 border-orange-500':'bg-zinc-800 text-zinc-400 border-zinc-700 hover:border-orange-400 hover:text-orange-400')}><ShoppingBag size={15}/>{orderMode?'Sipariş Modu':'Sipariş Oluştur'}</button>
               </div>
               {orderMode&&(
@@ -2466,6 +2602,22 @@ export default function App(){
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {cameraScanOpen&&(
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-[255] p-4">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-[28px] w-full max-w-md shadow-2xl overflow-hidden">
+            <div className="p-5 border-b border-zinc-800 bg-zinc-950/50 flex justify-between items-center">
+              <h3 className="text-lg font-black text-white flex items-center gap-2"><Camera size={18} className="text-emerald-400"/> Kameradan Barkod Oku</h3>
+              <button onClick={()=>setCameraScanOpen(false)} className="text-zinc-500 hover:text-white bg-zinc-800 p-2 rounded-xl"><X size={18}/></button>
+            </div>
+            <div className="p-4 space-y-3">
+              <video ref={cameraVideoRef} autoPlay playsInline muted className="w-full aspect-[3/4] bg-black rounded-2xl border border-zinc-700 object-cover"/>
+              {cameraScanError?<div className="bg-red-500/10 border border-red-500/30 text-red-300 text-sm rounded-xl p-3">{cameraScanError}</div>:<p className="text-zinc-400 text-sm">Barkodu kameraya yaklaştır. Otomatik algılanınca sepete eklenir.</p>}
+              <button onClick={()=>setCameraScanOpen(false)} className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-3 rounded-xl font-bold text-sm">Kapat</button>
             </div>
           </div>
         </div>
