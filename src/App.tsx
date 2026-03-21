@@ -345,6 +345,8 @@ export default function App(){
   const [cameraScanError,setCameraScanError]=useState('');
   const [cameraLastDetected,setCameraLastDetected]=useState('');
   const [cameraManualBarcode,setCameraManualBarcode]=useState('');
+  const [cameraDevices,setCameraDevices]=useState<{id:string;label:string}[]>([]);
+  const [selectedCameraId,setSelectedCameraId]=useState('');
   const [cameraRestartKey,setCameraRestartKey]=useState(0);
   const cameraVideoRef=useRef<HTMLVideoElement>(null);
   const cameraStreamRef=useRef<MediaStream|null>(null);
@@ -547,6 +549,45 @@ export default function App(){
           return;
         }
 
+        const scoreCameraLabel=(label:string)=>{
+          const s=(label||'').toLowerCase();
+          if(/front|user|selfie|ön/.test(s)) return -100;
+          if(/back|rear|environment|arka|world/.test(s)) return 100;
+          if(/wide|ultra|tele|main/.test(s)) return 10;
+          return 0;
+        };
+        const loadCameraList=async()=>{
+          let devices=await navigator.mediaDevices.enumerateDevices();
+          let cams=devices.filter(d=>d.kind==='videoinput');
+          const labelsHidden=cams.length>0&&cams.every(c=>!c.label);
+          if(labelsHidden){
+            try{
+              const warmup=await navigator.mediaDevices.getUserMedia({video:true,audio:false});
+              warmup.getTracks().forEach(t=>t.stop());
+              devices=await navigator.mediaDevices.enumerateDevices();
+              cams=devices.filter(d=>d.kind==='videoinput');
+            }catch{
+              // İzin gelmezse mevcut liste ile devam.
+            }
+          }
+          const sorted=[...cams].sort((a,b)=>{
+            const sa=scoreCameraLabel(a.label||'');
+            const sb=scoreCameraLabel(b.label||'');
+            if(sb!==sa) return sb-sa;
+            return 0;
+          });
+          const listed=sorted.map((c,i)=>({
+            id:c.deviceId,
+            label:c.label||('Kamera '+(i+1))
+          }));
+          setCameraDevices(listed);
+          const useSelected=selectedCameraId&&sorted.some(c=>c.deviceId===selectedCameraId);
+          const pickId=(useSelected?selectedCameraId:(sorted[0]?.deviceId||''));
+          if(pickId!==selectedCameraId) setSelectedCameraId(pickId);
+          return {sorted,preferredCameraId:pickId};
+        };
+        const {sorted:sortedCams,preferredCameraId}=await loadCameraList();
+
         const handleDetected=(value:string)=>{
           const raw=String(value||'').trim();
           if(!raw) return false;
@@ -590,32 +631,27 @@ export default function App(){
               };
               if(formats?.length) cfg.formatsToSupport=formats;
 
-              const sources:any[]=[
+              const sources:any[]=[];
+              if(preferredCameraId) sources.push(preferredCameraId);
+              sortedCams.forEach(c=>{
+                const id=(c as any)?.deviceId;
+                if(id&&id!==preferredCameraId) sources.push(id);
+              });
+              sources.push(
                 {facingMode:{exact:'environment'}},
                 {facingMode:{ideal:'environment'}},
                 {facingMode:'environment'}
-              ];
-              try{
-                const cams=await Html5Qrcode.getCameras?.();
-                if(Array.isArray(cams)&&cams.length){
-                  const scored=[...cams].map((cam:any,idx:number)=>({cam,idx})).sort((a:any,b:any)=>{
-                    const score=(label:string)=>{
-                      const s=(label||'').toLowerCase();
-                      if(/front|user|selfie|ön/.test(s)) return -100;
-                      if(/back|rear|environment|arka|world/.test(s)) return 100;
-                      if(/wide|ultra|tele|main/.test(s)) return 10;
-                      return 0;
-                    };
-                    const sa=score(a.cam?.label||'');
-                    const sb=score(b.cam?.label||'');
-                    if(sb!==sa) return sb-sa;
-                    return b.idx-a.idx;
-                  });
-                  scored.forEach((r:any)=>{if(r.cam?.id) sources.push(r.cam.id);});
-                }
-              }catch{}
+              );
+              const uniqSources:any[]=[];
+              const seen=new Set<string>();
+              for(const src of sources){
+                const key=typeof src==='string'?'id:'+src:'obj:'+JSON.stringify(src);
+                if(seen.has(key)) continue;
+                seen.add(key);
+                uniqSources.push(src);
+              }
               let html5Started=false;
-              for(const s of sources){
+              for(const s of uniqSources){
                 try{
                   await scanner.start(
                     s,
@@ -651,30 +687,7 @@ export default function App(){
             setCameraMode('native');
             const reader=new ReaderCtor();
             let controls:any=null;
-            let preferredVideoId:string|undefined=undefined;
-            try{
-              const devices=await navigator.mediaDevices.enumerateDevices();
-              const cams=devices.filter(d=>d.kind==='videoinput');
-              if(cams.length){
-                const score=(label:string)=>{
-                  const s=(label||'').toLowerCase();
-                  if(/front|user|selfie|ön/.test(s)) return -100;
-                  if(/back|rear|environment|arka|world/.test(s)) return 100;
-                  if(/wide|ultra|tele|main/.test(s)) return 10;
-                  return 0;
-                };
-                cams.sort((a,b)=>{
-                  const sa=score(a.label||'');
-                  const sb=score(b.label||'');
-                  if(sb!==sa) return sb-sa;
-                  return 0;
-                });
-                if(cams.length>1&&score(cams[0].label||'')===score(cams[1].label||'')){
-                  cams.reverse();
-                }
-                preferredVideoId=cams[0]?.deviceId||undefined;
-              }
-            }catch{}
+            const preferredVideoId=preferredCameraId||(sortedCams[0]?.deviceId||undefined);
             if(typeof reader.decodeFromConstraints==='function'){
               const cb=(result:any)=>{
                 const raw=String(result?.getText?.()??result?.text??'');
@@ -727,11 +740,18 @@ export default function App(){
 
         // 3) Native BarcodeDetector fallback
         setCameraMode('native');
-        const tryConstraints:MediaStreamConstraints[]=[
+        const tryConstraints:MediaStreamConstraints[]=[];
+        if(preferredCameraId){
+          tryConstraints.push({video:{deviceId:{exact:preferredCameraId}},audio:false});
+        }
+        tryConstraints.push(
           {video:{facingMode:{exact:'environment'}},audio:false},
-          {video:{facingMode:{ideal:'environment'}},audio:false},
-          {video:true,audio:false},
-        ];
+          {video:{facingMode:{ideal:'environment'}},audio:false}
+        );
+        sortedCams.forEach(c=>{
+          const id=(c as any)?.deviceId;
+          if(id&&id!==preferredCameraId) tryConstraints.push({video:{deviceId:{exact:id}},audio:false});
+        });
         let stream:MediaStream|null=null;
         let lastErr:any=null;
         for(const constraints of tryConstraints){
@@ -2906,12 +2926,20 @@ export default function App(){
                 <span>Motor: {cameraMode==='html5'?'html5-qrcode':cameraMode==='native'?'native/ZXing fallback':'hazırlanıyor'}</span>
                 {cameraLastDetected&&<span className="font-mono text-zinc-400">Algılanan: {cameraLastDetected}</span>}
               </div>
+              {cameraDevices.length>0&&(
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-zinc-500 uppercase">Kamera Seç</label>
+                  <select value={selectedCameraId} onChange={e=>{setSelectedCameraId(e.target.value);setCameraScanError('');setCameraLastDetected('');setCameraMode('init');setCameraRestartKey(v=>v+1);}} className="w-full bg-zinc-950 border border-zinc-700 text-white p-2.5 rounded-xl outline-none focus:border-emerald-500 text-sm">
+                    {cameraDevices.map((cam,i)=><option key={cam.id||i} value={cam.id}>{cam.label}</option>)}
+                  </select>
+                </div>
+              )}
               {cameraScanError?<div className="bg-red-500/10 border border-red-500/30 text-red-300 text-sm rounded-xl p-3">{cameraScanError}</div>:<p className="text-zinc-400 text-sm">Barkodu kameraya yaklaştır. Otomatik algılanınca sepete eklenir.</p>}
               <div className="flex gap-2">
                 <input value={cameraManualBarcode} onChange={e=>setCameraManualBarcode(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&addProductByBarcode(cameraManualBarcode)){setCameraScanOpen(false);setCameraManualBarcode('');setCameraLastDetected('');}}} placeholder="Manuel barkod gir" className="flex-1 bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-emerald-500 text-sm font-mono"/>
                 <button onClick={()=>{if(addProductByBarcode(cameraManualBarcode)){setCameraScanOpen(false);setCameraManualBarcode('');setCameraLastDetected('');}}} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-4 rounded-xl font-black text-sm">Ekle</button>
               </div>
-              <button onClick={()=>{setCameraScanError('');setCameraLastDetected('');setCameraMode('init');setCameraRestartKey(v=>v+1);}} className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-2.5 rounded-xl font-bold text-sm border border-zinc-700">Arka Kamerayı Tekrar Dene</button>
+              <button onClick={()=>{setCameraScanError('');setCameraLastDetected('');setCameraMode('init');setCameraRestartKey(v=>v+1);}} className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-2.5 rounded-xl font-bold text-sm border border-zinc-700">Kamerayı Yeniden Başlat</button>
               <p className="text-zinc-500 text-xs">Kamera açılmazsa linki WhatsApp/Instagram içinden değil, doğrudan Safari/Chrome’da aç.</p>
               <button onClick={()=>{setCameraScanOpen(false);setCameraManualBarcode('');setCameraLastDetected('');setCameraMode('init');}} className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-3 rounded-xl font-bold text-sm">Kapat</button>
             </div>
