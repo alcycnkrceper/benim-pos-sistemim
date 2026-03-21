@@ -351,6 +351,7 @@ export default function App(){
   const cameraBusyRef=useRef(false);
   const cameraZXingControlsRef=useRef<any>(null);
   const cameraHtml5ScannerRef=useRef<any>(null);
+  const cameraLastAcceptedRef=useRef<{code:string;ts:number}>({code:'',ts:0});
   // ── Order mode ────────────────────────────────────────────────────────
   const [orderMode,setOrderMode]=useState(false);
   const [orderCustomer,setOrderCustomer]=useState('');
@@ -522,6 +523,7 @@ export default function App(){
       cameraVideoRef.current.srcObject=null;
     }
     cameraBusyRef.current=false;
+    cameraLastAcceptedRef.current={code:'',ts:0};
     setCameraMode('init');
   };
 
@@ -529,7 +531,9 @@ export default function App(){
     if(!cameraScanOpen) return;
     let active=true;
     setCameraScanError('');
+    setCameraLastDetected('');
     setCameraMode('init');
+    cameraLastAcceptedRef.current={code:'',ts:0};
 
     const start=async()=>{
       try{
@@ -541,6 +545,18 @@ export default function App(){
           setCameraScanError('Bu cihazda kamera erişimi desteklenmiyor.');
           return;
         }
+
+        const handleDetected=(value:string)=>{
+          const raw=String(value||'').trim();
+          if(!raw) return false;
+          setCameraLastDetected(raw);
+          const now=Date.now();
+          const prev=cameraLastAcceptedRef.current;
+          if(prev.code===raw&&now-prev.ts<1200) return false;
+          const ok=addProductByBarcode(raw);
+          if(ok) cameraLastAcceptedRef.current={code:raw,ts:now};
+          return ok;
+        };
 
         // 1) Mobilde daha güvenilir: html5-qrcode motorunu dene.
         try{
@@ -557,18 +573,42 @@ export default function App(){
                 F.EAN_13,F.EAN_8,F.UPC_A,F.UPC_E,F.CODE_39,F.CODE_93,F.CODE_128,F.ITF
               ].filter((x:any)=>typeof x!=='undefined'):undefined;
               const cfg:any={
-                fps:12,
+                fps:15,
                 aspectRatio:1.777,
+                disableFlip:true,
+                qrbox:(vw:number,vh:number)=>({
+                  width:Math.floor(vw*0.92),
+                  height:Math.max(90,Math.floor(vh*0.28))
+                }),
+                videoConstraints:{
+                  width:{ideal:1920},
+                  height:{ideal:1080},
+                  advanced:[{focusMode:'continuous'}]
+                },
                 experimentalFeatures:{useBarCodeDetectorIfSupported:true}
               };
               if(formats?.length) cfg.formatsToSupport=formats;
 
-              const sources:any[]=[
+              const sources:any[]=[];
+              try{
+                const cams=await Html5Qrcode.getCameras?.();
+                if(Array.isArray(cams)&&cams.length){
+                  const scored=[...cams].sort((a:any,b:any)=>{
+                    const score=(label:string)=>{
+                      const s=(label||'').toLowerCase();
+                      return /back|rear|environment|arka/.test(s)?2:/wide/.test(s)?1:0;
+                    };
+                    return score(b.label)-score(a.label);
+                  });
+                  scored.forEach((c:any)=>{if(c?.id) sources.push(c.id);});
+                }
+              }catch{}
+              sources.push(
                 {facingMode:{exact:'environment'}},
                 {facingMode:{ideal:'environment'}},
                 {facingMode:'environment'},
                 {facingMode:'user'}
-              ];
+              );
               let html5Started=false;
               for(const s of sources){
                 try{
@@ -576,8 +616,7 @@ export default function App(){
                     s,
                     cfg,
                     (decodedText:string)=>{
-                      const raw=String(decodedText||'').trim();
-                      if(raw&&addProductByBarcode(raw)){
+                      if(handleDetected(decodedText)){
                         setCameraManualBarcode('');
                         setCameraScanOpen(false);
                       }
@@ -612,8 +651,8 @@ export default function App(){
                 {video:{facingMode:{ideal:'environment'}}},
                 cameraVideoRef.current,
                 (result:any)=>{
-                  const raw=String(result?.getText?.()??result?.text??'').trim();
-                  if(raw&&addProductByBarcode(raw)){
+                  const raw=String(result?.getText?.()??result?.text??'');
+                  if(handleDetected(raw)){
                     setCameraScanOpen(false);
                   }
                 }
@@ -623,8 +662,8 @@ export default function App(){
                 undefined,
                 cameraVideoRef.current,
                 (result:any)=>{
-                  const raw=String(result?.getText?.()??result?.text??'').trim();
-                  if(raw&&addProductByBarcode(raw)){
+                  const raw=String(result?.getText?.()??result?.text??'');
+                  if(handleDetected(raw)){
                     setCameraScanOpen(false);
                   }
                 }
@@ -672,9 +711,17 @@ export default function App(){
           setCameraScanError('Kamera açıldı. Otomatik barkod için Chrome/Edge kullanın veya alttan barkodu manuel girin.');
           return;
         }
-        const detector=new DetectorCtor({
-          formats:['ean_13','ean_8','code_128','code_39','upc_a','upc_e','qr_code']
-        });
+        let detectorFormats=['ean_13','ean_8','code_128','code_39','upc_a','upc_e','itf','qr_code'];
+        try{
+          if(typeof DetectorCtor.getSupportedFormats==='function'){
+            const supported:string[]=await DetectorCtor.getSupportedFormats();
+            if(Array.isArray(supported)&&supported.length){
+              const filtered=detectorFormats.filter(f=>supported.includes(f));
+              detectorFormats=filtered.length?filtered:supported;
+            }
+          }
+        }catch{}
+        const detector=new DetectorCtor({formats:detectorFormats});
 
         const tick=async()=>{
           if(!active||!cameraVideoRef.current) return;
@@ -685,9 +732,9 @@ export default function App(){
           cameraBusyRef.current=true;
           try{
             const codes=await detector.detect(cameraVideoRef.current);
-            const raw=(codes?.[0]?.rawValue||'').trim();
-            if(raw){
-              if(addProductByBarcode(raw)){
+            for(const c of (codes||[])){
+              const raw=String(c?.rawValue||'');
+              if(handleDetected(raw)){
                 setCameraScanOpen(false);
                 return;
               }
@@ -779,21 +826,32 @@ export default function App(){
     const vars=new Set<string>();
     if(!base) return [];
     vars.add(base);
+    const compact=base.replace(/[^A-Za-z0-9]/g,'');
+    if(compact) vars.add(compact);
     const digits=base.replace(/\D/g,'');
-    if(digits.length===base.length){
+    if(digits.length){
       vars.add(digits);
+      if(digits.length>=8) vars.add(digits.slice(-8));
+      if(digits.length>=12) vars.add(digits.slice(-12));
+      if(digits.length>=13) vars.add(digits.slice(-13));
       if(digits.length===12) vars.add('0'+digits);
       if(digits.length===13&&digits.startsWith('0')) vars.add(digits.slice(1));
-      if(digits.length===8) vars.add('00000'+digits);
+      const noLead=digits.replace(/^0+/,'');
+      if(noLead) vars.add(noLead);
     }
-    return Array.from(vars);
+    return Array.from(vars).filter(Boolean);
   };
   const findProductByBarcode=(rawCode:string)=>{
     const codeVars=barcodeVariants(rawCode);
     if(codeVars.length===0) return null;
     return products.find((p:any)=>{
       const pVars=barcodeVariants(String(p.barcode||''));
-      return codeVars.some(v=>pVars.includes(v));
+      if(pVars.length===0) return false;
+      return codeVars.some(v=>pVars.some(pv=>{
+        if(v===pv) return true;
+        if(v.length>=8&&pv.length>=8&&(v.endsWith(pv)||pv.endsWith(v))) return true;
+        return false;
+      }));
     })||null;
   };
   const addProductByBarcode=(rawCode:string)=>{
@@ -804,7 +862,7 @@ export default function App(){
     }
     const found=findProductByBarcode(code);
     if(!found){
-      setCameraScanError('Bu barkod sistemde kayıtlı değil: '+code);
+      setCameraScanError('Bu barkod sistemde kayıtlı değil: '+code+' (ürün barkodu ile birebir aynı olmalı)');
       return false;
     }
     setActivePage('pos');
@@ -1395,7 +1453,7 @@ export default function App(){
             <div className="flex-1 p-5 flex flex-col overflow-hidden">
               <div className="flex items-center gap-3 mb-4">
                 <div className="relative flex-1"><Search className="absolute left-3.5 top-3 text-zinc-500" size={16}/><input type="text" value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Ürün adı veya barkod..." className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl py-3 pl-11 pr-4 outline-none focus:border-emerald-500 text-sm"/></div>
-                <button onClick={()=>{setCameraScanError('');setCameraManualBarcode('');setCameraMode('init');setCameraScanOpen(true);}} className="px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-2 border bg-zinc-800 text-zinc-300 border-zinc-700 hover:border-emerald-400 hover:text-emerald-400 transition-all"><Camera size={15}/> Kameradan</button>
+                <button onClick={()=>{setCameraScanError('');setCameraLastDetected('');setCameraManualBarcode('');setCameraMode('init');setCameraScanOpen(true);}} className="px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-2 border bg-zinc-800 text-zinc-300 border-zinc-700 hover:border-emerald-400 hover:text-emerald-400 transition-all"><Camera size={15}/> Kameradan</button>
                 <button onClick={()=>setOrderMode(!orderMode)} className={'px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-2 border transition-all '+(orderMode?'bg-orange-500 text-zinc-950 border-orange-500':'bg-zinc-800 text-zinc-400 border-zinc-700 hover:border-orange-400 hover:text-orange-400')}><ShoppingBag size={15}/>{orderMode?'Sipariş Modu':'Sipariş Oluştur'}</button>
               </div>
               {orderMode&&(
@@ -2792,18 +2850,22 @@ export default function App(){
           <div className="bg-zinc-900 border border-zinc-700 rounded-[28px] w-full max-w-md shadow-2xl overflow-hidden">
             <div className="p-5 border-b border-zinc-800 bg-zinc-950/50 flex justify-between items-center">
               <h3 className="text-lg font-black text-white flex items-center gap-2"><Camera size={18} className="text-emerald-400"/> Kameradan Barkod Oku</h3>
-              <button onClick={()=>{setCameraScanOpen(false);setCameraManualBarcode('');setCameraMode('init');}} className="text-zinc-500 hover:text-white bg-zinc-800 p-2 rounded-xl"><X size={18}/></button>
+              <button onClick={()=>{setCameraScanOpen(false);setCameraManualBarcode('');setCameraLastDetected('');setCameraMode('init');}} className="text-zinc-500 hover:text-white bg-zinc-800 p-2 rounded-xl"><X size={18}/></button>
             </div>
             <div className="p-4 space-y-3">
               <div id={CAMERA_SCAN_BOX_ID} className={(cameraMode==='html5'?'block ':'hidden ')+"w-full aspect-[3/4] bg-black rounded-2xl border border-zinc-700 overflow-hidden"}/>
               <video ref={cameraVideoRef} autoPlay playsInline muted className={(cameraMode!=='html5'?'block ':'hidden ')+"w-full aspect-[3/4] bg-black rounded-2xl border border-zinc-700 object-cover"}/>
+              <div className="flex items-center justify-between text-[11px] text-zinc-500 px-1">
+                <span>Motor: {cameraMode==='html5'?'html5-qrcode':cameraMode==='native'?'native/ZXing fallback':'hazırlanıyor'}</span>
+                {cameraLastDetected&&<span className="font-mono text-zinc-400">Algılanan: {cameraLastDetected}</span>}
+              </div>
               {cameraScanError?<div className="bg-red-500/10 border border-red-500/30 text-red-300 text-sm rounded-xl p-3">{cameraScanError}</div>:<p className="text-zinc-400 text-sm">Barkodu kameraya yaklaştır. Otomatik algılanınca sepete eklenir.</p>}
               <div className="flex gap-2">
-                <input value={cameraManualBarcode} onChange={e=>setCameraManualBarcode(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&addProductByBarcode(cameraManualBarcode)){setCameraScanOpen(false);setCameraManualBarcode('');}}} placeholder="Manuel barkod gir" className="flex-1 bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-emerald-500 text-sm font-mono"/>
-                <button onClick={()=>{if(addProductByBarcode(cameraManualBarcode)){setCameraScanOpen(false);setCameraManualBarcode('');}}} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-4 rounded-xl font-black text-sm">Ekle</button>
+                <input value={cameraManualBarcode} onChange={e=>setCameraManualBarcode(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&addProductByBarcode(cameraManualBarcode)){setCameraScanOpen(false);setCameraManualBarcode('');setCameraLastDetected('');}}} placeholder="Manuel barkod gir" className="flex-1 bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-emerald-500 text-sm font-mono"/>
+                <button onClick={()=>{if(addProductByBarcode(cameraManualBarcode)){setCameraScanOpen(false);setCameraManualBarcode('');setCameraLastDetected('');}}} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-4 rounded-xl font-black text-sm">Ekle</button>
               </div>
               <p className="text-zinc-500 text-xs">Kamera açılmazsa linki WhatsApp/Instagram içinden değil, doğrudan Safari/Chrome’da aç.</p>
-              <button onClick={()=>{setCameraScanOpen(false);setCameraManualBarcode('');setCameraMode('init');}} className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-3 rounded-xl font-bold text-sm">Kapat</button>
+              <button onClick={()=>{setCameraScanOpen(false);setCameraManualBarcode('');setCameraLastDetected('');setCameraMode('init');}} className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-3 rounded-xl font-bold text-sm">Kapat</button>
             </div>
           </div>
         </div>
