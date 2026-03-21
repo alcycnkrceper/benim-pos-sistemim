@@ -589,13 +589,18 @@ export default function App(){
               };
               if(formats?.length) cfg.formatsToSupport=formats;
 
-              const sources:any[]=[];
+              const sources:any[]=[
+                {facingMode:{exact:'environment'}},
+                {facingMode:{ideal:'environment'}},
+                {facingMode:'environment'}
+              ];
               try{
                 const cams=await Html5Qrcode.getCameras?.();
                 if(Array.isArray(cams)&&cams.length){
                   const scored=[...cams].sort((a:any,b:any)=>{
                     const score=(label:string)=>{
                       const s=(label||'').toLowerCase();
+                      if(/front|user|selfie|ön/.test(s)) return -1;
                       return /back|rear|environment|arka/.test(s)?2:/wide/.test(s)?1:0;
                     };
                     return score(b.label)-score(a.label);
@@ -603,12 +608,7 @@ export default function App(){
                   scored.forEach((c:any)=>{if(c?.id) sources.push(c.id);});
                 }
               }catch{}
-              sources.push(
-                {facingMode:{exact:'environment'}},
-                {facingMode:{ideal:'environment'}},
-                {facingMode:'environment'},
-                {facingMode:'user'}
-              );
+              sources.push({facingMode:'user'});
               let html5Started=false;
               for(const s of sources){
                 try{
@@ -646,28 +646,61 @@ export default function App(){
             setCameraMode('native');
             const reader=new ReaderCtor();
             let controls:any=null;
+            let preferredVideoId:string|undefined=undefined;
+            try{
+              const devices=await navigator.mediaDevices.enumerateDevices();
+              const cams=devices.filter(d=>d.kind==='videoinput');
+              if(cams.length){
+                const score=(label:string)=>{
+                  const s=(label||'').toLowerCase();
+                  if(/front|user|selfie|ön/.test(s)) return -1;
+                  if(/back|rear|environment|arka/.test(s)) return 2;
+                  return 0;
+                };
+                cams.sort((a,b)=>score(b.label)-score(a.label));
+                preferredVideoId=cams[0]?.deviceId||undefined;
+              }
+            }catch{}
             if(typeof reader.decodeFromConstraints==='function'){
-              controls=await reader.decodeFromConstraints(
-                {video:{facingMode:{ideal:'environment'}}},
-                cameraVideoRef.current,
-                (result:any)=>{
-                  const raw=String(result?.getText?.()??result?.text??'');
-                  if(handleDetected(raw)){
-                    setCameraScanOpen(false);
-                  }
+              const cb=(result:any)=>{
+                const raw=String(result?.getText?.()??result?.text??'');
+                if(handleDetected(raw)){
+                  setCameraScanOpen(false);
                 }
-              );
+              };
+              try{
+                controls=await reader.decodeFromConstraints(
+                  {video:{facingMode:{exact:'environment'}}},
+                  cameraVideoRef.current,
+                  cb
+                );
+              }catch{
+                controls=await reader.decodeFromConstraints(
+                  {video:{facingMode:{ideal:'environment'}}},
+                  cameraVideoRef.current,
+                  cb
+                );
+              }
             }else if(typeof reader.decodeFromVideoDevice==='function'){
-              controls=await reader.decodeFromVideoDevice(
-                undefined,
-                cameraVideoRef.current,
-                (result:any)=>{
-                  const raw=String(result?.getText?.()??result?.text??'');
-                  if(handleDetected(raw)){
-                    setCameraScanOpen(false);
-                  }
+              const cb=(result:any)=>{
+                const raw=String(result?.getText?.()??result?.text??'');
+                if(handleDetected(raw)){
+                  setCameraScanOpen(false);
                 }
-              );
+              };
+              try{
+                controls=await reader.decodeFromVideoDevice(
+                  preferredVideoId,
+                  cameraVideoRef.current,
+                  cb
+                );
+              }catch{
+                controls=await reader.decodeFromVideoDevice(
+                  undefined,
+                  cameraVideoRef.current,
+                  cb
+                );
+              }
             }
             if(controls){
               cameraZXingControlsRef.current=controls;
