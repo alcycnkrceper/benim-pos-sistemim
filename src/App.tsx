@@ -109,29 +109,35 @@ const xd=(v:Date)=>({t:'d' as const,v,z:'yyyy-mm-dd'});
 const xs=(v:string)=>({t:'s' as const,v});
 const xe=()=>({t:'z' as const,v:null});
 
-async function exportParasut(arr:any[],fname?:string){
+async function exportParasut(arr:any[],fname?:string,opts:{firmName?:string;depotName?:string;invoicePrefix?:string}={}){
   const XLSX=await loadXLSX();
-  const inv=arr.filter(s=>s.method!=='Tahsilat');
+  const inv=arr.filter(s=>s.method!=='Tahsilat'&&(s.items||[]).length>0);
+  const depot=String(opts.depotName||'Merkez Depo').trim()||'Merkez Depo';
+  const invPrefix=String(opts.invoicePrefix||'FTR').trim()||'FTR';
   const rows:any[][]=[];
+  let lineCount=0;
   rows.push([xs(PARASUT_HELP),...Array.from({length:19},xe)]);
   rows.push(Array.from({length:20},xe));
   rows.push(PARASUT_HEADERS.map(xs));
   inv.forEach((sale,idx)=>{
-    (sale.items??[]).forEach((item:any,ii:number)=>{
-      const k=nKdv(item.taxRate),q=item.qty??1,up=item.grossPrice??0;
-      if(ii===0) rows.push([xs(sale.customerName||''),xs('FTR-'+(String(idx+1).padStart(4,'0'))),xd(parseDT(sale.date)),xs('TRL'),xe(),xe(),xe(),xs('Fatura'),xs('FTR'),xn(idx+1,'0'),xe(),xs(item.name||''),xe(),xe(),xn(q),xn(up),xn(sale.discountAmount??0),xn(k,'#,##0.00'),xe(),xe()]);
-      else rows.push([xe(),xe(),xe(),xe(),xe(),xe(),xe(),xe(),xe(),xe(),xe(),xs(item.name||''),xe(),xe(),xn(q),xn(up),xn(0),xn(k,'#,##0.00'),xe(),xe()]);
+    const saleItems=(sale.items??[]).filter((it:any)=>String(it?.name||'').trim()!=='');
+    saleItems.forEach((item:any,ii:number)=>{
+      const k=nKdv(item.taxRate),q=Math.max(1,Number(item.qty)||1),up=Math.max(0,Number(item.grossPrice)||0);
+      const customer=String(sale.customerName||opts.firmName||'Perakende M��teri').trim();
+      const invName=invPrefix+'-'+(String(idx+1).padStart(4,'0'));
+      lineCount++;
+      if(ii===0) rows.push([xs(customer),xs(invName),xd(parseDT(sale.date)),xs('TRL'),xe(),xe(),xe(),xs('Fatura'),xs(invPrefix),xn(idx+1,'0'),xe(),xs(String(item.name||'�r�n')),xe(),xs(depot),xn(q),xn(up),xn(Number(sale.discountAmount)||0),xn(k,'#,##0.00'),xe(),xe()]);
+      else rows.push([xe(),xe(),xe(),xe(),xe(),xe(),xe(),xe(),xe(),xe(),xe(),xs(String(item.name||'�r�n')),xe(),xe(),xn(q),xn(up),xn(0),xn(k,'#,##0.00'),xe(),xe()]);
     });
   });
   const ws=XLSX.utils.aoa_to_sheet(rows);
   ws['!cols']=[30,22,14,12,12,14,22,14,12,14,14,28,28,16,10,16,16,12,10,22].map(wch=>({wch}));
   ws['!rows']=[{hpt:300}];
   const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,ws,'Satış Faturaları');
+  XLSX.utils.book_append_sheet(wb,ws,'Sat�� Faturalar�');
   XLSX.writeFile(wb,fname||'parasut_'+(new Date().toISOString().slice(0,10))+'.xlsx');
+  return{invoiceCount:inv.length,lineCount};
 }
-
-// ─── FİŞ ŞABLONU ──────────────────────────────────────────────────────────
 function ReceiptTemplate({sale,settings,preview=false}:{sale:any;settings:ReceiptSettings;preview?:boolean}){
   if(!sale)return null;
   const pw=PAPER_WIDTHS[settings.paperSize];
@@ -370,6 +376,10 @@ export default function App(){
   const [settingsTab,setSettingsTab]=useState<'fis'|'parasut'>('fis');
   const [parasutFirm,setParasutFirm]=useState(()=>localStorage.getItem('parasutFirm')||'');
   const [parasutDepot,setParasutDepot]=useState(()=>localStorage.getItem('parasutDepot')||'');
+  const parasutFirmTrim=parasutFirm.trim();
+  const parasutDepotTrim=parasutDepot.trim();
+  const parasutReady=parasutFirmTrim.length>0&&parasutDepotTrim.length>0;
+  const parasutOpts=useMemo(()=>({firmName:parasutFirmTrim,depotName:parasutDepotTrim,invoicePrefix:'FTR'}),[parasutFirmTrim,parasutDepotTrim]);
   const [staffLogFilter,setStaffLogFilter]=useState('all');
   const [staffLogDateFilter,setStaffLogDateFilter]=useState('');
   // ── Staff ─────────────────────────────────────────────────────────────
@@ -490,6 +500,16 @@ export default function App(){
   const logAction=async(action:string,detail:string,amount?:number)=>{
     if(!currentStaff)return;
     await addDoc(collection(db,'staffLogs'),{staffId:currentStaff.id,staffName:currentStaff.name,role:currentStaff.role,action,detail,amount:amount||0,date:new Date().toLocaleString('tr-TR'),ts:Date.now()});
+  };
+
+  const handleParasutExport=async(arr:any[],fileName?:string)=>{
+    if(!parasutReady){
+      alert('Paraşüt aktarımı için önce Firma Ünvanı ve Çıkış Deposu alanlarını doldurun.');
+      return null;
+    }
+    const stats=await exportParasut(arr,fileName,parasutOpts);
+    if(stats)alert('Paraşüt dosyası oluşturuldu: '+stats.invoiceCount+' fatura, '+stats.lineCount+' satır.');
+    return stats;
   };
 
   // ── Cart ──────────────────────────────────────────────────────────────
@@ -755,8 +775,42 @@ export default function App(){
       if(!ds.length)continue;
       dailyRows.push({ds_str,cnt:ds.length,ciro:ds.reduce((a:number,b:any)=>a+(b.total||0),0),nakit:ds.filter((s:any)=>s.method==='Nakit').reduce((a:number,b:any)=>a+(b.total||0),0),kart:ds.filter((s:any)=>s.method==='Kart').reduce((a:number,b:any)=>a+(b.total||0),0),veresiye:ds.filter((s:any)=>s.method==='Veresiye').reduce((a:number,b:any)=>a+(b.total||0),0)});
     }
-    return{yr,mo,ciro,cogs,exp,kar,nakit,kart,veresiye,topUrunler,dailyRows,ms};
+    const count=ms.length;
+    const avgInvoice=count>0?ciro/count:0;
+    const grossProfit=ciro-cogs;
+    const grossMargin=ciro>0?(grossProfit/ciro)*100:0;
+    const netMargin=ciro>0?(kar/ciro)*100:0;
+    const expenseRatio=ciro>0?(exp/ciro)*100:0;
+    return{yr,mo,ciro,cogs,exp,kar,nakit,kart,veresiye,topUrunler,dailyRows,ms,count,avgInvoice,grossProfit,grossMargin,netMargin,expenseRatio};
   },[sales,expenses,reportMonth]);
+  const prevMonthlyStats=useMemo(()=>{
+    const[yr,mo]=reportMonth.split('-').map(Number);
+    const prev=new Date(yr,mo-2,1);
+    const pYr=prev.getFullYear();
+    const pMo=prev.getMonth()+1;
+    const ms=sales.filter(s=>{const d=parseDT(s.date);return d.getFullYear()===pYr&&d.getMonth()===pMo-1&&s.method!=='Tahsilat';});
+    const me=expenses.filter(e=>{try{const d=new Date(e.date);return d.getFullYear()===pYr&&d.getMonth()===pMo-1;}catch{return false;}});
+    const ciro=ms.reduce((a:number,b:any)=>a+(b.total||0),0);
+    const cogs=ms.reduce((a:number,b:any)=>a+(b.totalCost||0),0);
+    const exp=me.reduce((a:number,b:any)=>a+(b.amount||0),0);
+    const kar=ciro-cogs-exp;
+    const count=ms.length;
+    const avgInvoice=count>0?ciro/count:0;
+    return{yr:pYr,mo:pMo,ciro,cogs,exp,kar,count,avgInvoice};
+  },[sales,expenses,reportMonth]);
+  const monthlyDelta=useMemo(()=>{
+    const d=(cur:number,prev:number)=>prev===0?(cur===0?0:100):((cur-prev)/Math.abs(prev))*100;
+    const prevNetMargin=prevMonthlyStats.ciro>0?(prevMonthlyStats.kar/prevMonthlyStats.ciro)*100:0;
+    return{
+      ciro:d(monthlyStats.ciro,prevMonthlyStats.ciro),
+      kar:d(monthlyStats.kar,prevMonthlyStats.kar),
+      avgInvoice:d(monthlyStats.avgInvoice,prevMonthlyStats.avgInvoice),
+      count:d(monthlyStats.count,prevMonthlyStats.count),
+      netMargin:d(monthlyStats.netMargin,prevNetMargin),
+    };
+  },[monthlyStats,prevMonthlyStats]);
+  const monthLabel=useMemo(()=>new Date(monthlyStats.yr,monthlyStats.mo-1,1).toLocaleDateString('tr-TR',{month:'long',year:'numeric'}),[monthlyStats.yr,monthlyStats.mo]);
+  const prevMonthLabel=useMemo(()=>new Date(prevMonthlyStats.yr,prevMonthlyStats.mo-1,1).toLocaleDateString('tr-TR',{month:'long',year:'numeric'}),[prevMonthlyStats.yr,prevMonthlyStats.mo]);
   const splitN=useMemo(()=>parseFloat(splitNakit)||0,[splitNakit]);
   const splitK=useMemo(()=>parseFloat(splitKart)||0,[splitKart]);
   const splitDiff=useMemo(()=>(parseFloat(splitNakit)||0)+(parseFloat(splitKart)||0)-finalTotal,[splitNakit,splitKart,finalTotal]);
@@ -800,7 +854,7 @@ export default function App(){
     return{id:'MRG-'+(Date.now()),customerName:selectedCustomer?.name||'',customerTax:selectedCustomer?.taxNum||'-',method:'Veresiye',date:new Date().toLocaleString('tr-TR'),dateRange:dr,items:allItems,subTotal:sorted.reduce((a,b)=>a+(b.subTotal||b.total||0),0),discountAmount:sorted.reduce((a,b)=>a+(b.discountAmount||0),0),discountPct:0,total:selTotal,isMerged:true,mergedCount:sorted.length};
   };
   const handleMergedPrint=()=>{setMergedPrint(buildMerged());setTimeout(()=>window.print(),150);};
-  const handleMergedXlsx=async()=>{const cn=(selectedCustomer?.name||'musteri').replace(/[^a-zA-Z0-9_]/g,'_');await exportParasut(selSales,'parasut_'+(cn)+'_'+(new Date().toISOString().slice(0,10))+'.xlsx');};
+  const handleMergedXlsx=async()=>{const cn=(selectedCustomer?.name||'musteri').replace(/[^a-zA-Z0-9_]/g,'_');await handleParasutExport(selSales,'parasut_'+(cn)+'_'+(new Date().toISOString().slice(0,10))+'.xlsx');};
   const customerProductHistory=useMemo(()=>{
     if(!selectedCustomer)return[];
     const map:Record<string,{name:string;totalQty:number;totalSpent:number;dates:string[]}>={};
@@ -1816,7 +1870,7 @@ export default function App(){
           <div className="p-7 w-full overflow-y-auto">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-3xl font-black">Rapor & Analiz</h2>
-              <button onClick={()=>exportParasut(sales)} className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 text-sm shadow-lg shadow-blue-600/20"><FileSpreadsheet size={16}/> Paraşüt'e Aktar</button>
+              <button onClick={()=>handleParasutExport(sales.filter(s=>s.method!=='Tahsilat'),'parasut_tum_'+(new Date().toISOString().slice(0,10))+'.xlsx')} disabled={!parasutReady} className={'bg-blue-600 text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 text-sm shadow-lg shadow-blue-600/20 '+(parasutReady?'hover:bg-blue-500':'opacity-40 cursor-not-allowed')}><FileSpreadsheet size={16}/> Paraşüt'e Aktar</button>
             </div>
             <div className="flex flex-wrap gap-2 mb-6 bg-zinc-900 p-1.5 rounded-2xl border border-zinc-800 w-fit">
               {([['genel','Genel'],['aylik','Aylık Analiz'],['gunSonu','Gün Sonu'],['kdv','KDV'],['parasut','Paraşüt'],['personel','Personel']] as const).map(([tab,label])=>(
@@ -1859,69 +1913,72 @@ export default function App(){
 
 
             {reportTab==='aylik'&&(
-              <div>
-                <div className="flex items-center gap-4 mb-6">
-                  <label className="text-zinc-400 font-bold text-sm">Ay Seç:</label>
-                  <input type="month" value={reportMonth} onChange={e=>setReportMonth(e.target.value)} className="bg-zinc-900 border border-zinc-700 text-white rounded-xl px-4 py-2.5 outline-none focus:border-emerald-500 text-sm"/>
+              <div className="space-y-6">
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                  <div className="flex items-center gap-4">
+                    <label className="text-zinc-400 font-bold text-sm">Ay Seç:</label>
+                    <input type="month" value={reportMonth} onChange={e=>setReportMonth(e.target.value)} className="bg-zinc-900 border border-zinc-700 text-white rounded-xl px-4 py-2.5 outline-none focus:border-emerald-500 text-sm"/>
+                  </div>
+                  <div className="bg-zinc-900 border border-zinc-800 rounded-2xl px-4 py-3">
+                    <p className="text-zinc-500 text-xs font-bold uppercase">Karşılaştırma</p>
+                    <p className="text-white font-black text-sm">{monthLabel} vs {prevMonthLabel}</p>
+                  </div>
                 </div>
-                    <div className="space-y-6">
-                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-5">
-                        <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"><p className="text-zinc-500 text-xs font-bold uppercase mb-1">Aylık Ciro</p><p className="text-3xl font-black text-emerald-400">₺{monthlyStats.ciro.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p><p className="text-zinc-600 text-xs mt-1">{monthlyStats.ms.length} fatura</p></div>
-                        <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"><p className="text-blue-400 text-xs font-bold uppercase mb-1">SMM</p><p className="text-3xl font-black text-white">₺{monthlyStats.cogs.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p></div>
-                        <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"><p className="text-red-400 text-xs font-bold uppercase mb-1">Giderler</p><p className="text-3xl font-black text-white">₺{monthlyStats.exp.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p></div>
-                        <div className={'p-5 rounded-2xl border-2 '+(monthlyStats.kar>=0?'bg-emerald-500/10 border-emerald-500/30':'bg-red-500/10 border-red-500/30')}><p className={'text-xs font-bold uppercase mb-1 '+(monthlyStats.kar>=0?'text-emerald-400':'text-red-400')}>Net Kâr</p><p className={'text-3xl font-black '+(monthlyStats.kar>=0?'text-emerald-400':'text-red-400')}>₺{monthlyStats.kar.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p>{monthlyStats.ciro>0&&<p className="text-zinc-600 text-xs mt-1">Marj: %{((monthlyStats.kar/monthlyStats.ciro)*100).toFixed(1)}</p>}</div>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="bg-emerald-500/10 border border-emerald-500/30 p-4 rounded-2xl"><p className="text-emerald-400 text-xs font-bold uppercase mb-1">💵 Nakit</p><p className="text-2xl font-black text-emerald-400">₺{monthlyStats.nakit.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p></div>
-                        <div className="bg-blue-500/10 border border-blue-500/30 p-4 rounded-2xl"><p className="text-blue-400 text-xs font-bold uppercase mb-1">💳 Kart</p><p className="text-2xl font-black text-blue-400">₺{monthlyStats.kart.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p></div>
-                        <div className="bg-orange-500/10 border border-orange-500/30 p-4 rounded-2xl"><p className="text-orange-400 text-xs font-bold uppercase mb-1">📋 Veresiye</p><p className="text-2xl font-black text-orange-400">₺{monthlyStats.veresiye.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p></div>
-                      </div>
-                      {monthlyStats.topUrunler.length>0&&(
-                        <div className="bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden">
-                          <div className="p-5 border-b border-zinc-800 flex justify-between items-center"><h3 className="font-black flex items-center gap-2"><Package size={15} className="text-purple-400"/> Bu Ayın En Çok Satan Ürünleri</h3><span className="text-zinc-600 text-xs">{new Date(monthlyStats.yr,monthlyStats.mo-1).toLocaleDateString('tr-TR',{month:'long',year:'numeric'})}</span></div>
-                          <table className="w-full text-sm">
-                            <thead className="bg-zinc-950 text-zinc-500 text-xs font-bold uppercase"><tr><th className="p-4 text-left">Ürün</th><th className="p-4 text-center">Adet</th><th className="p-4 text-right">Ciro</th><th className="p-4 text-right">Pay</th></tr></thead>
-                            <tbody className="divide-y divide-zinc-800/50">
-                              {monthlyStats.topUrunler.map((u,i)=>(
-                                <tr key={i} className="hover:bg-zinc-800/30">
-                                  <td className="p-4 font-bold text-zinc-300 text-sm">{u.name}</td>
-                                  <td className="p-4 text-center"><span className="bg-purple-500 text-white font-black text-xs px-2.5 py-1 rounded-full">{u.adet}</span></td>
-                                  <td className="p-4 text-right font-black text-white">₺{u.ciro.toLocaleString('tr-TR',{minimumFractionDigits:2})}</td>
-                                  <td className="p-4 text-right">
-                                    <div className="flex items-center justify-end gap-2">
-                                      <div className="w-20 bg-zinc-800 rounded-full h-1.5"><div className="h-1.5 rounded-full bg-emerald-500" style={{width:(monthlyStats.ciro>0?((u.ciro*100)/monthlyStats.ciro):0).toFixed(1)+'%'}}></div></div>
-                                      <span className="text-zinc-500 text-xs">%{(monthlyStats.ciro>0?((u.ciro*100)/monthlyStats.ciro):0).toFixed(1)}</span>
-                                    </div>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                      {/* Gün gün tablo */}
-                      <div className="bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden">
-                        <div className="p-5 border-b border-zinc-800"><h3 className="font-black flex items-center gap-2"><CalendarDays size={15} className="text-blue-400"/> Günlük Dökümü</h3></div>
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-sm">
-                            <thead className="bg-zinc-950 text-zinc-500 text-xs font-bold uppercase"><tr><th className="p-4 text-left">Tarih</th><th className="p-4 text-right">Satış Adedi</th><th className="p-4 text-right">Ciro</th><th className="p-4 text-right">Nakit</th><th className="p-4 text-right">Kart</th><th className="p-4 text-right">Veresiye</th></tr></thead>
-                            <tbody className="divide-y divide-zinc-800/50">
-                              {monthlyStats.dailyRows.map((row:any,_di:number)=>(
-                                <tr key={_di} className="hover:bg-zinc-800/30"><td className="p-4 text-zinc-400 font-mono text-xs">{row.ds_str}</td><td className="p-4 text-right text-zinc-400">{row.cnt}</td><td className="p-4 text-right font-black text-white">₺{row.ciro.toLocaleString('tr-TR',{minimumFractionDigits:2})}</td><td className="p-4 text-right text-emerald-400">₺{row.nakit.toLocaleString('tr-TR',{minimumFractionDigits:2})}</td><td className="p-4 text-right text-blue-400">₺{row.kart.toLocaleString('tr-TR',{minimumFractionDigits:2})}</td><td className="p-4 text-right text-orange-400">₺{row.veresiye.toLocaleString('tr-TR',{minimumFractionDigits:2})}</td></tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
+                  <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"><p className="text-zinc-500 text-xs font-bold uppercase mb-1">Aylık Ciro</p><p className="text-3xl font-black text-emerald-400">₺{monthlyStats.ciro.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p><p className={'text-xs mt-1 font-bold '+(monthlyDelta.ciro>=0?'text-emerald-400':'text-red-400')}>{monthlyDelta.ciro>=0?'↑':'↓'} %{Math.abs(monthlyDelta.ciro).toFixed(1)} ({prevMonthLabel})</p></div>
+                  <div className={'p-5 rounded-2xl border '+(monthlyStats.kar>=0?'border-emerald-500/30 bg-emerald-500/10':'border-red-500/30 bg-red-500/10')}><p className="text-xs font-bold uppercase mb-1 text-zinc-300">Net Kar</p><p className={'text-3xl font-black '+(monthlyStats.kar>=0?'text-emerald-400':'text-red-400')}>₺{monthlyStats.kar.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p><p className={'text-xs mt-1 font-bold '+(monthlyDelta.kar>=0?'text-emerald-400':'text-red-400')}>{monthlyDelta.kar>=0?'↑':'↓'} %{Math.abs(monthlyDelta.kar).toFixed(1)}</p></div>
+                  <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"><p className="text-zinc-500 text-xs font-bold uppercase mb-1">Brüt Kar</p><p className="text-3xl font-black text-white">₺{monthlyStats.grossProfit.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p><p className="text-zinc-400 text-xs mt-1">Brüt Marj: %{monthlyStats.grossMargin.toFixed(1)}</p></div>
+                  <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"><p className="text-zinc-500 text-xs font-bold uppercase mb-1">Ortalama Fatura</p><p className="text-3xl font-black text-blue-400">₺{monthlyStats.avgInvoice.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p><p className={'text-xs mt-1 font-bold '+(monthlyDelta.avgInvoice>=0?'text-emerald-400':'text-red-400')}>{monthlyDelta.avgInvoice>=0?'↑':'↓'} %{Math.abs(monthlyDelta.avgInvoice).toFixed(1)}</p></div>
+                  <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"><p className="text-zinc-500 text-xs font-bold uppercase mb-1">Operasyon</p><p className="text-3xl font-black text-white">{monthlyStats.count}</p><p className="text-zinc-400 text-xs mt-1">Gider Oranı: %{monthlyStats.expenseRatio.toFixed(1)} • Net Marj: %{monthlyStats.netMargin.toFixed(1)} • ΔNet Marj: {monthlyDelta.netMargin>=0?'↑':'↓'}%{Math.abs(monthlyDelta.netMargin).toFixed(1)}</p></div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-emerald-500/10 border border-emerald-500/30 p-4 rounded-2xl"><p className="text-emerald-400 text-xs font-bold uppercase mb-1">Nakit</p><p className="text-2xl font-black text-emerald-400">₺{monthlyStats.nakit.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p><p className="text-zinc-500 text-xs mt-1">Pay: %{monthlyStats.ciro>0?((monthlyStats.nakit*100)/monthlyStats.ciro).toFixed(1):'0.0'}</p></div>
+                  <div className="bg-blue-500/10 border border-blue-500/30 p-4 rounded-2xl"><p className="text-blue-400 text-xs font-bold uppercase mb-1">Kart</p><p className="text-2xl font-black text-blue-400">₺{monthlyStats.kart.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p><p className="text-zinc-500 text-xs mt-1">Pay: %{monthlyStats.ciro>0?((monthlyStats.kart*100)/monthlyStats.ciro).toFixed(1):'0.0'}</p></div>
+                  <div className="bg-orange-500/10 border border-orange-500/30 p-4 rounded-2xl"><p className="text-orange-400 text-xs font-bold uppercase mb-1">Veresiye</p><p className="text-2xl font-black text-orange-400">₺{monthlyStats.veresiye.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p><p className="text-zinc-500 text-xs mt-1">Pay: %{monthlyStats.ciro>0?((monthlyStats.veresiye*100)/monthlyStats.ciro).toFixed(1):'0.0'}</p></div>
+                </div>
+                {monthlyStats.topUrunler.length>0&&(
+                  <div className="bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden">
+                    <div className="p-5 border-b border-zinc-800 flex justify-between items-center"><h3 className="font-black flex items-center gap-2"><Package size={15} className="text-purple-400"/> En Çok Satan Ürünler</h3><span className="text-zinc-600 text-xs">{monthLabel}</span></div>
+                    <table className="w-full text-sm">
+                      <thead className="bg-zinc-950 text-zinc-500 text-xs font-bold uppercase"><tr><th className="p-4 text-left">Ürün</th><th className="p-4 text-center">Adet</th><th className="p-4 text-right">Ciro</th><th className="p-4 text-right">Pay</th></tr></thead>
+                      <tbody className="divide-y divide-zinc-800/50">
+                        {monthlyStats.topUrunler.map((u,i)=>(
+                          <tr key={i} className="hover:bg-zinc-800/30">
+                            <td className="p-4 font-bold text-zinc-300 text-sm">{u.name}</td>
+                            <td className="p-4 text-center"><span className="bg-purple-500 text-white font-black text-xs px-2.5 py-1 rounded-full">{u.adet}</span></td>
+                            <td className="p-4 text-right font-black text-white">₺{u.ciro.toLocaleString('tr-TR',{minimumFractionDigits:2})}</td>
+                            <td className="p-4 text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                <div className="w-20 bg-zinc-800 rounded-full h-1.5"><div className="h-1.5 rounded-full bg-emerald-500" style={{width:(monthlyStats.ciro>0?((u.ciro*100)/monthlyStats.ciro):0).toFixed(1)+'%'}}></div></div>
+                                <span className="text-zinc-500 text-xs">%{(monthlyStats.ciro>0?((u.ciro*100)/monthlyStats.ciro):0).toFixed(1)}</span>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                <div className="bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden">
+                  <div className="p-5 border-b border-zinc-800"><h3 className="font-black flex items-center gap-2"><CalendarDays size={15} className="text-blue-400"/> Günlük Dökümü</h3></div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-zinc-950 text-zinc-500 text-xs font-bold uppercase"><tr><th className="p-4 text-left">Tarih</th><th className="p-4 text-right">Satış Adedi</th><th className="p-4 text-right">Ciro</th><th className="p-4 text-right">Nakit</th><th className="p-4 text-right">Kart</th><th className="p-4 text-right">Veresiye</th></tr></thead>
+                      <tbody className="divide-y divide-zinc-800/50">
+                        {monthlyStats.dailyRows.map((row:any,_di:number)=>(
+                          <tr key={_di} className="hover:bg-zinc-800/30"><td className="p-4 text-zinc-400 font-mono text-xs">{row.ds_str}</td><td className="p-4 text-right text-zinc-400">{row.cnt}</td><td className="p-4 text-right font-black text-white">₺{row.ciro.toLocaleString('tr-TR',{minimumFractionDigits:2})}</td><td className="p-4 text-right text-emerald-400">₺{row.nakit.toLocaleString('tr-TR',{minimumFractionDigits:2})}</td><td className="p-4 text-right text-blue-400">₺{row.kart.toLocaleString('tr-TR',{minimumFractionDigits:2})}</td><td className="p-4 text-right text-orange-400">₺{row.veresiye.toLocaleString('tr-TR',{minimumFractionDigits:2})}</td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
             )}
-
             {reportTab==='parasut'&&(
               <div className="space-y-6">
                 <div className="bg-blue-500/10 border border-blue-500/30 rounded-2xl p-5">
                   <h3 className="font-black text-white text-lg mb-1 flex items-center gap-2"><FileSpreadsheet size={18} className="text-blue-400"/> Paraşüt Tam Entegrasyon</h3>
-                  <p className="text-zinc-400 text-sm">Satışlarınızı Paraşüt uyumlu Excel formatında dışa aktarın. Ayarları bir kez yapın, her seferinde otomatik kullanılır.</p>
+                  <p className="text-zinc-400 text-sm">Satışlarınızı Paraşüt uyumlu Excel formatında dışa aktarın. Ayarları bir kez yapın, her seferinde otomatik kullanılır.</p><p className={"text-xs font-bold mt-2 "+(parasutReady?"text-emerald-400":"text-orange-400")}>{parasutReady?"Hazır: Aktarım yapabilirsiniz.":"Eksik ayar: Firma Ünvanı ve Çıkış Deposu gerekli."}</p>
                 </div>
                 {/* Paraşüt ayarları */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1944,11 +2001,11 @@ export default function App(){
                     <h4 className="font-black text-lg mb-4 border-b border-zinc-800 pb-3">Dışa Aktarma Seçenekleri</h4>
                     <div className="space-y-3">
                       {[
-                        {label:'Tüm Satışlar',desc:(sales.filter(s=>s.method!=='Tahsilat').length)+' fatura',action:()=>exportParasut(sales.filter(s=>s.method!=='Tahsilat'),'parasut_tum_'+(new Date().toISOString().slice(0,10))+'.xlsx'),color:'bg-blue-600 hover:bg-blue-500'},
-                        {label:'Bu Ay',desc:(()=>{const now=new Date();return sales.filter(s=>{const d=parseDT(s.date);return d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth()&&s.method!=='Tahsilat';}).length+' fatura';})(),action:()=>{const now=new Date();const m=sales.filter(s=>{const d=parseDT(s.date);return d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth()&&s.method!=='Tahsilat';});exportParasut(m,'parasut_'+(now.getFullYear())+'_'+(String(now.getMonth()+1).padStart(2,'0'))+'.xlsx');},color:'bg-emerald-600 hover:bg-emerald-500'},
-                        {label:'Seçili Ay ('+(reportMonth)+')',desc:(()=>{const[yr,mo]=reportMonth.split('-').map(Number);return sales.filter(s=>{const d=parseDT(s.date);return d.getFullYear()===yr&&d.getMonth()===mo-1&&s.method!=='Tahsilat';}).length+' fatura';})(),action:()=>{const[yr,mo]=reportMonth.split('-').map(Number);const m=sales.filter(s=>{const d=parseDT(s.date);return d.getFullYear()===yr&&d.getMonth()===mo-1&&s.method!=='Tahsilat';});exportParasut(m,'parasut_'+(reportMonth)+'.xlsx');},color:'bg-purple-600 hover:bg-purple-500'},
+                        {label:'Tüm Satışlar',desc:(sales.filter(s=>s.method!=='Tahsilat').length)+' fatura',action:()=>handleParasutExport(sales.filter(s=>s.method!=='Tahsilat'),'parasut_tum_'+(new Date().toISOString().slice(0,10))+'.xlsx'),color:'bg-blue-600 hover:bg-blue-500'},
+                        {label:'Bu Ay',desc:(()=>{const now=new Date();return sales.filter(s=>{const d=parseDT(s.date);return d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth()&&s.method!=='Tahsilat';}).length+' fatura';})(),action:()=>{const now=new Date();const m=sales.filter(s=>{const d=parseDT(s.date);return d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth()&&s.method!=='Tahsilat';});handleParasutExport(m,'parasut_'+(now.getFullYear())+'_'+(String(now.getMonth()+1).padStart(2,'0'))+'.xlsx');},color:'bg-emerald-600 hover:bg-emerald-500'},
+                        {label:'Seçili Ay ('+(reportMonth)+')',desc:(()=>{const[yr,mo]=reportMonth.split('-').map(Number);return sales.filter(s=>{const d=parseDT(s.date);return d.getFullYear()===yr&&d.getMonth()===mo-1&&s.method!=='Tahsilat';}).length+' fatura';})(),action:()=>{const[yr,mo]=reportMonth.split('-').map(Number);const m=sales.filter(s=>{const d=parseDT(s.date);return d.getFullYear()===yr&&d.getMonth()===mo-1&&s.method!=='Tahsilat';});handleParasutExport(m,'parasut_'+(reportMonth)+'.xlsx');},color:'bg-purple-600 hover:bg-purple-500'},
                       ].map((opt,i)=>(
-                        <button key={i} onClick={opt.action} className={'w-full '+(opt.color)+' text-white p-4 rounded-2xl font-black flex items-center justify-between shadow-lg text-sm transition-all'}>
+                        <button key={i} onClick={opt.action} disabled={!parasutReady} className={'w-full '+(opt.color)+' text-white p-4 rounded-2xl font-black flex items-center justify-between shadow-lg text-sm transition-all '+(!parasutReady?'opacity-40 cursor-not-allowed grayscale':'')}>
                           <div className="flex items-center gap-3"><FileSpreadsheet size={18}/><div className="text-left"><div>{opt.label}</div><div className="text-xs opacity-70 font-normal">{opt.desc}</div></div></div>
                           <Download size={16}/>
                         </button>
@@ -2159,17 +2216,17 @@ export default function App(){
                         <p>%8 → %10 · %18 → %20 (2023 reform uyumlu)</p>
                         <p>Tüm satışlar "Fatura" türünde aktarılır</p>
                       </div>
-                      <button onClick={()=>exportParasut(sales.filter(s=>s.method!=='Tahsilat'))} className="w-full bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-xl font-black flex items-center justify-center gap-2 text-sm"><FileSpreadsheet size={16}/> Tüm Satışları Dışa Aktar</button>
+                      <button onClick={()=>handleParasutExport(sales.filter(s=>s.method!=='Tahsilat'),'parasut_tum_'+(new Date().toISOString().slice(0,10))+'.xlsx')} disabled={!parasutReady} className={'w-full bg-blue-600 text-white py-3 rounded-xl font-black flex items-center justify-center gap-2 text-sm '+(parasutReady?'hover:bg-blue-500':'opacity-40 cursor-not-allowed')}><FileSpreadsheet size={16}/> Tüm Satışları Dışa Aktar</button>
                     </div>
                   </div>
                   <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl">
                     <h4 className="font-black text-lg mb-4 border-b border-zinc-800 pb-3">Hızlı Dışa Aktarma</h4>
                     <div className="space-y-3">
                       {[
-                        {label:'Bu Ay',color:'bg-emerald-600',action:()=>{const now=new Date();exportParasut(sales.filter(s=>{const d=parseDT(s.date);return d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth()&&s.method!=='Tahsilat';}),'parasut_'+(now.getFullYear())+'_'+(String(now.getMonth()+1).padStart(2,'0'))+'.xlsx');}},
-                        {label:'Geçen Ay',color:'bg-zinc-700',action:()=>{const now=new Date();const prev=new Date(now.getFullYear(),now.getMonth()-1,1);exportParasut(sales.filter(s=>{const d=parseDT(s.date);return d.getFullYear()===prev.getFullYear()&&d.getMonth()===prev.getMonth()&&s.method!=='Tahsilat';}),'parasut_'+(prev.getFullYear())+'_'+(String(prev.getMonth()+1).padStart(2,'0'))+'.xlsx');}},
-                        {label:'Bu Yıl',color:'bg-purple-600',action:()=>{const yr=new Date().getFullYear();exportParasut(sales.filter(s=>{const d=parseDT(s.date);return d.getFullYear()===yr&&s.method!=='Tahsilat';}),'parasut_'+(yr)+'.xlsx');}},
-                      ].map((opt,i)=><button key={i} onClick={opt.action} className={'w-full '+(opt.color)+' text-white p-4 rounded-xl font-black flex items-center justify-between text-sm'}><span>{opt.label}</span><Download size={15}/></button>)}
+                        {label:'Bu Ay',color:'bg-emerald-600',action:()=>{const now=new Date();handleParasutExport(sales.filter(s=>{const d=parseDT(s.date);return d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth()&&s.method!=='Tahsilat';}),'parasut_'+(now.getFullYear())+'_'+(String(now.getMonth()+1).padStart(2,'0'))+'.xlsx');}},
+                        {label:'Geçen Ay',color:'bg-zinc-700',action:()=>{const now=new Date();const prev=new Date(now.getFullYear(),now.getMonth()-1,1);handleParasutExport(sales.filter(s=>{const d=parseDT(s.date);return d.getFullYear()===prev.getFullYear()&&d.getMonth()===prev.getMonth()&&s.method!=='Tahsilat';}),'parasut_'+(prev.getFullYear())+'_'+(String(prev.getMonth()+1).padStart(2,'0'))+'.xlsx');}},
+                        {label:'Bu Yıl',color:'bg-purple-600',action:()=>{const yr=new Date().getFullYear();handleParasutExport(sales.filter(s=>{const d=parseDT(s.date);return d.getFullYear()===yr&&s.method!=='Tahsilat';}),'parasut_'+(yr)+'.xlsx');}},
+                      ].map((opt,i)=><button key={i} onClick={opt.action} disabled={!parasutReady} className={'w-full '+(opt.color)+' text-white p-4 rounded-xl font-black flex items-center justify-between text-sm '+(!parasutReady?'opacity-40 cursor-not-allowed grayscale':'')}><span>{opt.label}</span><Download size={15}/></button>)}
                     </div>
                   </div>
                 </div>
@@ -2643,3 +2700,16 @@ export default function App(){
     </>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
