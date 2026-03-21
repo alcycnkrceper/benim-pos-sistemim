@@ -43,6 +43,26 @@ function loadXLSX(): Promise<any> {
   });
 }
 
+function loadZXingBrowser(): Promise<any> {
+  return new Promise((resolve, reject) => {
+    if ((window as any).ZXingBrowser) return resolve((window as any).ZXingBrowser);
+    const existing = document.querySelector('script[data-zxing-browser="1"]') as HTMLScriptElement | null;
+    if (existing) {
+      existing.addEventListener('load', () => resolve((window as any).ZXingBrowser), { once: true });
+      existing.addEventListener('error', reject, { once: true });
+      return;
+    }
+    const s = document.createElement('script');
+    s.src = 'https://unpkg.com/@zxing/browser@latest';
+    s.async = true;
+    s.defer = true;
+    s.dataset.zxingBrowser = '1';
+    s.onload = () => resolve((window as any).ZXingBrowser);
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
+
 // ─── FIREBASE ──────────────────────────────────────────────────────────────
 const firebaseConfig = {
   apiKey: "AIzaSyAqPHwW06rOK_kPDoyHQ-ZOqGWZtCJSLzU",
@@ -306,6 +326,7 @@ export default function App(){
   const cameraStreamRef=useRef<MediaStream|null>(null);
   const cameraFrameRef=useRef<number|null>(null);
   const cameraBusyRef=useRef(false);
+  const cameraZXingControlsRef=useRef<any>(null);
   // ── Order mode ────────────────────────────────────────────────────────
   const [orderMode,setOrderMode]=useState(false);
   const [orderCustomer,setOrderCustomer]=useState('');
@@ -455,6 +476,11 @@ export default function App(){
   },[products]);
 
   const stopCameraScan=()=>{
+    if(cameraZXingControlsRef.current){
+      try{cameraZXingControlsRef.current.stop?.();}catch{}
+      try{cameraZXingControlsRef.current.stopStreams?.();}catch{}
+      cameraZXingControlsRef.current=null;
+    }
     if(cameraFrameRef.current!==null){
       cancelAnimationFrame(cameraFrameRef.current);
       cameraFrameRef.current=null;
@@ -484,6 +510,47 @@ export default function App(){
           setCameraScanError('Bu cihazda kamera erişimi desteklenmiyor.');
           return;
         }
+
+        // 1) Mobilde daha güvenilir olduğu için önce ZXing ile dene.
+        try{
+          const zxing=await loadZXingBrowser();
+          const ReaderCtor=(zxing as any)?.BrowserMultiFormatReader||(zxing as any)?.BrowserMultiFormatOneDReader;
+          if(ReaderCtor&&cameraVideoRef.current){
+            const reader=new ReaderCtor();
+            let controls:any=null;
+            if(typeof reader.decodeFromConstraints==='function'){
+              controls=await reader.decodeFromConstraints(
+                {video:{facingMode:{ideal:'environment'}}},
+                cameraVideoRef.current,
+                (result:any)=>{
+                  const raw=String(result?.getText?.()??result?.text??'').trim();
+                  if(raw&&addProductByBarcode(raw)){
+                    setCameraScanOpen(false);
+                  }
+                }
+              );
+            }else if(typeof reader.decodeFromVideoDevice==='function'){
+              controls=await reader.decodeFromVideoDevice(
+                undefined,
+                cameraVideoRef.current,
+                (result:any)=>{
+                  const raw=String(result?.getText?.()??result?.text??'').trim();
+                  if(raw&&addProductByBarcode(raw)){
+                    setCameraScanOpen(false);
+                  }
+                }
+              );
+            }
+            if(controls){
+              cameraZXingControlsRef.current=controls;
+              return;
+            }
+          }
+        }catch{
+          // ZXing açılamazsa alttaki native akışa düş.
+        }
+
+        // 2) Native BarcodeDetector fallback
         const tryConstraints:MediaStreamConstraints[]=[
           {video:{facingMode:{exact:'environment'}},audio:false},
           {video:{facingMode:{ideal:'environment'}},audio:false},
@@ -2612,12 +2679,17 @@ export default function App(){
           <div className="bg-zinc-900 border border-zinc-700 rounded-[28px] w-full max-w-md shadow-2xl overflow-hidden">
             <div className="p-5 border-b border-zinc-800 bg-zinc-950/50 flex justify-between items-center">
               <h3 className="text-lg font-black text-white flex items-center gap-2"><Camera size={18} className="text-emerald-400"/> Kameradan Barkod Oku</h3>
-              <button onClick={()=>setCameraScanOpen(false)} className="text-zinc-500 hover:text-white bg-zinc-800 p-2 rounded-xl"><X size={18}/></button>
+              <button onClick={()=>{setCameraScanOpen(false);setCameraManualBarcode('');}} className="text-zinc-500 hover:text-white bg-zinc-800 p-2 rounded-xl"><X size={18}/></button>
             </div>
             <div className="p-4 space-y-3">
               <video ref={cameraVideoRef} autoPlay playsInline muted className="w-full aspect-[3/4] bg-black rounded-2xl border border-zinc-700 object-cover"/>
               {cameraScanError?<div className="bg-red-500/10 border border-red-500/30 text-red-300 text-sm rounded-xl p-3">{cameraScanError}</div>:<p className="text-zinc-400 text-sm">Barkodu kameraya yaklaştır. Otomatik algılanınca sepete eklenir.</p>}
-              <button onClick={()=>setCameraScanOpen(false)} className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-3 rounded-xl font-bold text-sm">Kapat</button>
+              <div className="flex gap-2">
+                <input value={cameraManualBarcode} onChange={e=>setCameraManualBarcode(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&addProductByBarcode(cameraManualBarcode)){setCameraScanOpen(false);setCameraManualBarcode('');}}} placeholder="Manuel barkod gir" className="flex-1 bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-emerald-500 text-sm font-mono"/>
+                <button onClick={()=>{if(addProductByBarcode(cameraManualBarcode)){setCameraScanOpen(false);setCameraManualBarcode('');}}} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-4 rounded-xl font-black text-sm">Ekle</button>
+              </div>
+              <p className="text-zinc-500 text-xs">Kamera açılmazsa linki WhatsApp/Instagram içinden değil, doğrudan Safari/Chrome’da aç.</p>
+              <button onClick={()=>{setCameraScanOpen(false);setCameraManualBarcode('');}} className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-3 rounded-xl font-bold text-sm">Kapat</button>
             </div>
           </div>
         </div>
