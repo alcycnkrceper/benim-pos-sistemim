@@ -63,6 +63,26 @@ function loadZXingBrowser(): Promise<any> {
   });
 }
 
+function loadHtml5Qrcode(): Promise<any> {
+  return new Promise((resolve, reject) => {
+    if ((window as any).Html5Qrcode) return resolve((window as any));
+    const existing = document.querySelector('script[data-html5qrcode="1"]') as HTMLScriptElement | null;
+    if (existing) {
+      existing.addEventListener('load', () => resolve((window as any)), { once: true });
+      existing.addEventListener('error', reject, { once: true });
+      return;
+    }
+    const s = document.createElement('script');
+    s.src = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
+    s.async = true;
+    s.defer = true;
+    s.dataset.html5qrcode = '1';
+    s.onload = () => resolve((window as any));
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
+
 // ─── FIREBASE ──────────────────────────────────────────────────────────────
 const firebaseConfig = {
   apiKey: "AIzaSyAqPHwW06rOK_kPDoyHQ-ZOqGWZtCJSLzU",
@@ -94,6 +114,7 @@ const DEFAULT_SETTINGS: ReceiptSettings = {
 };
 const PAPER_WIDTHS:Record<PaperSize,number> = {'58mm':220,'80mm':310,'a5':520,'a4':680};
 const PAPER_LABELS:Record<PaperSize,string> = {'58mm':'Termal 58mm','80mm':'Termal 80mm','a5':'A5','a4':'A4'};
+const CAMERA_SCAN_BOX_ID='camera-scan-box';
 const loadSettings = ():ReceiptSettings => { try { const s=localStorage.getItem('rcptS'); return s?{...DEFAULT_SETTINGS,...JSON.parse(s)}:DEFAULT_SETTINGS; } catch { return DEFAULT_SETTINGS; } };
 const saveSettingsLS = (s:ReceiptSettings) => localStorage.setItem('rcptS',JSON.stringify(s));
 
@@ -320,6 +341,7 @@ export default function App(){
   const [printSale,setPrintSale]=useState<any>(null);
   const [mergedPrint,setMergedPrint]=useState<any>(null);
   const [cameraScanOpen,setCameraScanOpen]=useState(false);
+  const [cameraMode,setCameraMode]=useState<'init'|'html5'|'native'>('init');
   const [cameraScanError,setCameraScanError]=useState('');
   const [cameraManualBarcode,setCameraManualBarcode]=useState('');
   const cameraVideoRef=useRef<HTMLVideoElement>(null);
@@ -327,6 +349,7 @@ export default function App(){
   const cameraFrameRef=useRef<number|null>(null);
   const cameraBusyRef=useRef(false);
   const cameraZXingControlsRef=useRef<any>(null);
+  const cameraHtml5ScannerRef=useRef<any>(null);
   // ── Order mode ────────────────────────────────────────────────────────
   const [orderMode,setOrderMode]=useState(false);
   const [orderCustomer,setOrderCustomer]=useState('');
