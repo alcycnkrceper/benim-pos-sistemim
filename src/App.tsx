@@ -9,7 +9,7 @@ import {
   Palette, Eye, Boxes, AlertTriangle, ArrowDownToLine, ChevronDown,
   Pencil, ArrowUpDown, Ban, ShoppingBag,
   FileText, Receipt, MessageSquare, Filter, LogIn, LogOut, UserCog,
-  Shield, RefreshCw, Tag, Camera
+  Shield, RefreshCw, Tag
 } from 'lucide-react';
 
 // ─── Guaranteed-safe icon aliases ──────────────────────────────────────────
@@ -38,46 +38,6 @@ function loadXLSX(): Promise<any> {
     const s = document.createElement('script');
     s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
     s.onload = () => resolve((window as any).XLSX);
-    s.onerror = reject;
-    document.head.appendChild(s);
-  });
-}
-
-function loadZXingBrowser(): Promise<any> {
-  return new Promise((resolve, reject) => {
-    if ((window as any).ZXingBrowser) return resolve((window as any).ZXingBrowser);
-    const existing = document.querySelector('script[data-zxing-browser="1"]') as HTMLScriptElement | null;
-    if (existing) {
-      existing.addEventListener('load', () => resolve((window as any).ZXingBrowser), { once: true });
-      existing.addEventListener('error', reject, { once: true });
-      return;
-    }
-    const s = document.createElement('script');
-    s.src = 'https://unpkg.com/@zxing/browser@latest';
-    s.async = true;
-    s.defer = true;
-    s.dataset.zxingBrowser = '1';
-    s.onload = () => resolve((window as any).ZXingBrowser);
-    s.onerror = reject;
-    document.head.appendChild(s);
-  });
-}
-
-function loadHtml5Qrcode(): Promise<any> {
-  return new Promise((resolve, reject) => {
-    if ((window as any).Html5Qrcode) return resolve((window as any));
-    const existing = document.querySelector('script[data-html5qrcode="1"]') as HTMLScriptElement | null;
-    if (existing) {
-      existing.addEventListener('load', () => resolve((window as any)), { once: true });
-      existing.addEventListener('error', reject, { once: true });
-      return;
-    }
-    const s = document.createElement('script');
-    s.src = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
-    s.async = true;
-    s.defer = true;
-    s.dataset.html5qrcode = '1';
-    s.onload = () => resolve((window as any));
     s.onerror = reject;
     document.head.appendChild(s);
   });
@@ -114,7 +74,6 @@ const DEFAULT_SETTINGS: ReceiptSettings = {
 };
 const PAPER_WIDTHS:Record<PaperSize,number> = {'58mm':220,'80mm':310,'a5':520,'a4':680};
 const PAPER_LABELS:Record<PaperSize,string> = {'58mm':'Termal 58mm','80mm':'Termal 80mm','a5':'A5','a4':'A4'};
-const CAMERA_SCAN_BOX_ID='camera-scan-box';
 const loadSettings = ():ReceiptSettings => { try { const s=localStorage.getItem('rcptS'); return s?{...DEFAULT_SETTINGS,...JSON.parse(s)}:DEFAULT_SETTINGS; } catch { return DEFAULT_SETTINGS; } };
 const saveSettingsLS = (s:ReceiptSettings) => localStorage.setItem('rcptS',JSON.stringify(s));
 
@@ -340,21 +299,6 @@ export default function App(){
   const [isVeresiyeOpen,setIsVeresiyeOpen]=useState(false);
   const [printSale,setPrintSale]=useState<any>(null);
   const [mergedPrint,setMergedPrint]=useState<any>(null);
-  const [cameraScanOpen,setCameraScanOpen]=useState(false);
-  const [cameraMode,setCameraMode]=useState<'init'|'html5'|'native'>('init');
-  const [cameraScanError,setCameraScanError]=useState('');
-  const [cameraLastDetected,setCameraLastDetected]=useState('');
-  const [cameraManualBarcode,setCameraManualBarcode]=useState('');
-  const [cameraDevices,setCameraDevices]=useState<{id:string;label:string}[]>([]);
-  const [selectedCameraId,setSelectedCameraId]=useState('');
-  const [cameraRestartKey,setCameraRestartKey]=useState(0);
-  const cameraVideoRef=useRef<HTMLVideoElement>(null);
-  const cameraStreamRef=useRef<MediaStream|null>(null);
-  const cameraFrameRef=useRef<number|null>(null);
-  const cameraBusyRef=useRef(false);
-  const cameraZXingControlsRef=useRef<any>(null);
-  const cameraHtml5ScannerRef=useRef<any>(null);
-  const cameraLastAcceptedRef=useRef<{code:string;ts:number}>({code:'',ts:0});
   // ── Order mode ────────────────────────────────────────────────────────
   const [orderMode,setOrderMode]=useState(false);
   const [orderCustomer,setOrderCustomer]=useState('');
@@ -503,343 +447,6 @@ export default function App(){
     return()=>{window.removeEventListener('keydown',hk);if(bufTimer)clearTimeout(bufTimer);};
   },[products]);
 
-  const stopCameraScan=()=>{
-    if(cameraHtml5ScannerRef.current){
-      try{cameraHtml5ScannerRef.current.stop?.().catch?.(()=>{});}catch{}
-      try{cameraHtml5ScannerRef.current.clear?.();}catch{}
-      cameraHtml5ScannerRef.current=null;
-    }
-    if(cameraZXingControlsRef.current){
-      try{cameraZXingControlsRef.current.stop?.();}catch{}
-      try{cameraZXingControlsRef.current.stopStreams?.();}catch{}
-      cameraZXingControlsRef.current=null;
-    }
-    if(cameraFrameRef.current!==null){
-      cancelAnimationFrame(cameraFrameRef.current);
-      cameraFrameRef.current=null;
-    }
-    if(cameraStreamRef.current){
-      cameraStreamRef.current.getTracks().forEach(t=>t.stop());
-      cameraStreamRef.current=null;
-    }
-    if(cameraVideoRef.current){
-      cameraVideoRef.current.srcObject=null;
-    }
-    cameraBusyRef.current=false;
-    cameraLastAcceptedRef.current={code:'',ts:0};
-    setCameraMode('init');
-  };
-
-  useEffect(()=>{
-    if(!cameraScanOpen) return;
-    let active=true;
-    setCameraScanError('');
-    setCameraLastDetected('');
-    setCameraMode('init');
-    cameraLastAcceptedRef.current={code:'',ts:0};
-
-    const start=async()=>{
-      try{
-        if(!window.isSecureContext){
-          setCameraScanError('Kamera için HTTPS gerekir. Vercel linkini https:// ile açın.');
-          return;
-        }
-        if(!navigator.mediaDevices?.getUserMedia){
-          setCameraScanError('Bu cihazda kamera erişimi desteklenmiyor.');
-          return;
-        }
-
-        const scoreCameraLabel=(label:string)=>{
-          const s=(label||'').toLowerCase();
-          if(/front|user|selfie|ön/.test(s)) return -100;
-          if(/back|rear|environment|arka|world/.test(s)) return 100;
-          if(/wide|ultra|tele|main/.test(s)) return 10;
-          return 0;
-        };
-        const loadCameraList=async()=>{
-          let devices=await navigator.mediaDevices.enumerateDevices();
-          let cams=devices.filter(d=>d.kind==='videoinput');
-          const labelsHidden=cams.length>0&&cams.every(c=>!c.label);
-          if(labelsHidden){
-            try{
-              const warmup=await navigator.mediaDevices.getUserMedia({video:true,audio:false});
-              warmup.getTracks().forEach(t=>t.stop());
-              devices=await navigator.mediaDevices.enumerateDevices();
-              cams=devices.filter(d=>d.kind==='videoinput');
-            }catch{
-              // İzin gelmezse mevcut liste ile devam.
-            }
-          }
-          const sorted=[...cams].sort((a,b)=>{
-            const sa=scoreCameraLabel(a.label||'');
-            const sb=scoreCameraLabel(b.label||'');
-            if(sb!==sa) return sb-sa;
-            return 0;
-          });
-          const listed=sorted.map((c,i)=>({
-            id:c.deviceId,
-            label:c.label||('Kamera '+(i+1))
-          }));
-          setCameraDevices(listed);
-          const useSelected=selectedCameraId&&sorted.some(c=>c.deviceId===selectedCameraId);
-          const pickId=(useSelected?selectedCameraId:(sorted[0]?.deviceId||''));
-          if(pickId!==selectedCameraId) setSelectedCameraId(pickId);
-          return {sorted,preferredCameraId:pickId};
-        };
-        const {sorted:sortedCams,preferredCameraId}=await loadCameraList();
-
-        const handleDetected=(value:string)=>{
-          const raw=String(value||'').trim();
-          if(!raw) return false;
-          setCameraLastDetected(raw);
-          const now=Date.now();
-          const prev=cameraLastAcceptedRef.current;
-          if(prev.code===raw&&now-prev.ts<1200) return false;
-          const ok=addProductByBarcode(raw);
-          if(ok) cameraLastAcceptedRef.current={code:raw,ts:now};
-          return ok;
-        };
-
-        // 1) Mobilde daha güvenilir: html5-qrcode motorunu dene.
-        try{
-          const w=await loadHtml5Qrcode();
-          const Html5Qrcode=(w as any).Html5Qrcode;
-          if(Html5Qrcode){
-            const target=document.getElementById(CAMERA_SCAN_BOX_ID);
-            if(target){
-              setCameraMode('html5');
-              const scanner=new Html5Qrcode(CAMERA_SCAN_BOX_ID);
-              cameraHtml5ScannerRef.current=scanner;
-              const F=(w as any).Html5QrcodeSupportedFormats;
-              const formats=F?[
-                F.EAN_13,F.EAN_8,F.UPC_A,F.UPC_E,F.CODE_39,F.CODE_93,F.CODE_128,F.ITF
-              ].filter((x:any)=>typeof x!=='undefined'):undefined;
-              const cfg:any={
-                fps:15,
-                aspectRatio:1.777,
-                disableFlip:true,
-                qrbox:(vw:number,vh:number)=>({
-                  width:Math.floor(vw*0.92),
-                  height:Math.max(90,Math.floor(vh*0.28))
-                }),
-                videoConstraints:{
-                  width:{ideal:1920},
-                  height:{ideal:1080},
-                  advanced:[{focusMode:'continuous'}]
-                },
-                experimentalFeatures:{useBarCodeDetectorIfSupported:true}
-              };
-              if(formats?.length) cfg.formatsToSupport=formats;
-
-              const sources:any[]=[];
-              if(preferredCameraId) sources.push(preferredCameraId);
-              sortedCams.forEach(c=>{
-                const id=(c as any)?.deviceId;
-                if(id&&id!==preferredCameraId) sources.push(id);
-              });
-              sources.push(
-                {facingMode:{exact:'environment'}},
-                {facingMode:{ideal:'environment'}},
-                {facingMode:'environment'}
-              );
-              const uniqSources:any[]=[];
-              const seen=new Set<string>();
-              for(const src of sources){
-                const key=typeof src==='string'?'id:'+src:'obj:'+JSON.stringify(src);
-                if(seen.has(key)) continue;
-                seen.add(key);
-                uniqSources.push(src);
-              }
-              let html5Started=false;
-              for(const s of uniqSources){
-                try{
-                  await scanner.start(
-                    s,
-                    cfg,
-                    (decodedText:string)=>{
-                      if(handleDetected(decodedText)){
-                        setCameraManualBarcode('');
-                        setCameraScanOpen(false);
-                      }
-                    },
-                    ()=>{}
-                  );
-                  html5Started=true;
-                  break;
-                }catch{}
-              }
-              if(html5Started) return;
-              try{await scanner.stop?.();}catch{}
-              try{scanner.clear?.();}catch{}
-              cameraHtml5ScannerRef.current=null;
-              setCameraMode('native');
-            }
-          }
-        }catch{
-          // html5-qrcode açılmazsa alttaki fallback akışına düş.
-        }
-
-        // 2) ZXing fallback
-        try{
-          const zxing=await loadZXingBrowser();
-          const ReaderCtor=(zxing as any)?.BrowserMultiFormatReader||(zxing as any)?.BrowserMultiFormatOneDReader;
-          if(ReaderCtor&&cameraVideoRef.current){
-            setCameraMode('native');
-            const reader=new ReaderCtor();
-            let controls:any=null;
-            const preferredVideoId=preferredCameraId||(sortedCams[0]?.deviceId||undefined);
-            if(typeof reader.decodeFromConstraints==='function'){
-              const cb=(result:any)=>{
-                const raw=String(result?.getText?.()??result?.text??'');
-                if(handleDetected(raw)){
-                  setCameraScanOpen(false);
-                }
-              };
-              try{
-                controls=await reader.decodeFromConstraints(
-                  {video:{facingMode:{exact:'environment'}}},
-                  cameraVideoRef.current,
-                  cb
-                );
-              }catch{
-                controls=await reader.decodeFromConstraints(
-                  {video:{facingMode:{ideal:'environment'}}},
-                  cameraVideoRef.current,
-                  cb
-                );
-              }
-            }else if(typeof reader.decodeFromVideoDevice==='function'){
-              const cb=(result:any)=>{
-                const raw=String(result?.getText?.()??result?.text??'');
-                if(handleDetected(raw)){
-                  setCameraScanOpen(false);
-                }
-              };
-              try{
-                controls=await reader.decodeFromVideoDevice(
-                  preferredVideoId,
-                  cameraVideoRef.current,
-                  cb
-                );
-              }catch{
-                controls=await reader.decodeFromVideoDevice(
-                  undefined,
-                  cameraVideoRef.current,
-                  cb
-                );
-              }
-            }
-            if(controls){
-              cameraZXingControlsRef.current=controls;
-              return;
-            }
-          }
-        }catch{
-          // ZXing açılamazsa alttaki native akışa düş.
-        }
-
-        // 3) Native BarcodeDetector fallback
-        setCameraMode('native');
-        const tryConstraints:MediaStreamConstraints[]=[];
-        if(preferredCameraId){
-          tryConstraints.push({video:{deviceId:{exact:preferredCameraId}},audio:false});
-        }
-        tryConstraints.push(
-          {video:{facingMode:{exact:'environment'}},audio:false},
-          {video:{facingMode:{ideal:'environment'}},audio:false}
-        );
-        sortedCams.forEach(c=>{
-          const id=(c as any)?.deviceId;
-          if(id&&id!==preferredCameraId) tryConstraints.push({video:{deviceId:{exact:id}},audio:false});
-        });
-        let stream:MediaStream|null=null;
-        let lastErr:any=null;
-        for(const constraints of tryConstraints){
-          try{
-            stream=await navigator.mediaDevices.getUserMedia(constraints);
-            break;
-          }catch(err){
-            lastErr=err;
-          }
-        }
-        if(!stream) throw lastErr||new Error('Kamera açılamadı');
-        if(!active){
-          stream.getTracks().forEach(t=>t.stop());
-          return;
-        }
-        cameraStreamRef.current=stream;
-        if(cameraVideoRef.current){
-          cameraVideoRef.current.srcObject=stream;
-          await cameraVideoRef.current.play().catch(()=>{});
-        }
-
-        const DetectorCtor=(window as any).BarcodeDetector;
-        if(!DetectorCtor){
-          setCameraScanError('Kamera açıldı. Otomatik barkod için Chrome/Edge kullanın veya alttan barkodu manuel girin.');
-          return;
-        }
-        let detectorFormats=['ean_13','ean_8','code_128','code_39','upc_a','upc_e','itf','qr_code'];
-        try{
-          if(typeof DetectorCtor.getSupportedFormats==='function'){
-            const supported:string[]=await DetectorCtor.getSupportedFormats();
-            if(Array.isArray(supported)&&supported.length){
-              const filtered=detectorFormats.filter(f=>supported.includes(f));
-              detectorFormats=filtered.length?filtered:supported;
-            }
-          }
-        }catch{}
-        const detector=new DetectorCtor({formats:detectorFormats});
-
-        const tick=async()=>{
-          if(!active||!cameraVideoRef.current) return;
-          if(cameraBusyRef.current){
-            cameraFrameRef.current=requestAnimationFrame(tick);
-            return;
-          }
-          cameraBusyRef.current=true;
-          try{
-            const codes=await detector.detect(cameraVideoRef.current);
-            for(const c of (codes||[])){
-              const raw=String(c?.rawValue||'');
-              if(handleDetected(raw)){
-                setCameraScanOpen(false);
-                return;
-              }
-            }
-          }catch{
-            // Kamerada geçici decode hataları normaldir; sessiz geç.
-          }finally{
-            cameraBusyRef.current=false;
-            if(active) cameraFrameRef.current=requestAnimationFrame(tick);
-          }
-        };
-
-        cameraFrameRef.current=requestAnimationFrame(tick);
-      }catch(err:any){
-        const name=String(err?.name||'');
-        if(name==='NotAllowedError'||name==='SecurityError'){
-          setCameraScanError('Kamera izni reddedildi. Tarayıcı ayarlarından kamera iznini Açık yapın.');
-          return;
-        }
-        if(name==='NotReadableError'){
-          setCameraScanError('Kamera başka bir uygulama tarafından kullanılıyor. Diğer uygulamaları kapatıp tekrar deneyin.');
-          return;
-        }
-        if(name==='NotFoundError'||name==='OverconstrainedError'){
-          setCameraScanError('Uygun kamera bulunamadı. Ön/arka kamera arasında değiştirip tekrar deneyin.');
-          return;
-        }
-        setCameraScanError('Kamera açılamadı. Linki doğrudan Safari/Chrome’da açıp tekrar deneyin.');
-      }
-    };
-
-    start();
-    return ()=>{
-      active=false;
-      stopCameraScan();
-    };
-  },[cameraScanOpen,products,cameraRestartKey]);
-
   useEffect(()=>{
     if(activePage==='stock.count'){
       const d:Record<string,string>={};
@@ -887,59 +494,6 @@ export default function App(){
 
   // ── Cart ──────────────────────────────────────────────────────────────
   const addToCart=(p:any)=>{setCart(prev=>{const ex=prev.find((i:any)=>i.id===p.id);if(ex)return prev.map((i:any)=>i.id===p.id?{...i,qty:i.qty+1}:i);return[...prev,{...p,qty:1}];});setSearchQuery('');};
-  const normalizeBarcodeValue=(code:string)=>(code||'').normalize('NFKC').replace(/[\s\-_.]/g,'').trim();
-  const barcodeVariants=(code:string)=>{
-    const base=normalizeBarcodeValue(code);
-    const vars=new Set<string>();
-    if(!base) return [];
-    vars.add(base);
-    const compact=base.replace(/[^A-Za-z0-9]/g,'');
-    if(compact) vars.add(compact);
-    const digits=base.replace(/\D/g,'');
-    if(digits.length){
-      vars.add(digits);
-      if(digits.length>=8) vars.add(digits.slice(-8));
-      if(digits.length>=12) vars.add(digits.slice(-12));
-      if(digits.length>=13) vars.add(digits.slice(-13));
-      if(digits.length===12) vars.add('0'+digits);
-      if(digits.length===13&&digits.startsWith('0')) vars.add(digits.slice(1));
-      const noLead=digits.replace(/^0+/,'');
-      if(noLead) vars.add(noLead);
-    }
-    return Array.from(vars).filter(Boolean);
-  };
-  const findProductByBarcode=(rawCode:string)=>{
-    const codeVars=barcodeVariants(rawCode);
-    if(codeVars.length===0) return null;
-    return products.find((p:any)=>{
-      const pVars=barcodeVariants(String(p.barcode||''));
-      if(pVars.length===0) return false;
-      return codeVars.some(v=>pVars.some(pv=>{
-        if(v===pv) return true;
-        if(v.length>=8&&pv.length>=8&&(v.endsWith(pv)||pv.endsWith(v))) return true;
-        return false;
-      }));
-    })||null;
-  };
-  const addProductByBarcode=(rawCode:string)=>{
-    const code=normalizeBarcodeValue(rawCode);
-    if(!code){
-      setCameraScanError('Barkod boş olamaz.');
-      return false;
-    }
-    const found=findProductByBarcode(code);
-    if(!found){
-      setCameraScanError('Bu barkod sistemde kayıtlı değil: '+code+' (ürün barkodu ile birebir aynı olmalı)');
-      return false;
-    }
-    setActivePage('pos');
-    addToCart(found);
-    setFlash(true);
-    setTimeout(()=>setFlash(false),300);
-    setSearchQuery('');
-    setCameraScanError('');
-    return true;
-  };
   const rawTotal=cart.reduce((t:number,i:any)=>t+((i.grossPrice||0)*i.qty),0);
   const totalCostCart=cart.reduce((t:number,i:any)=>t+((i.costPrice||0)*i.qty),0);
   const discountVal=parseFloat(discountPct)||0;
@@ -1520,7 +1074,6 @@ export default function App(){
             <div className="flex-1 p-5 flex flex-col overflow-hidden">
               <div className="flex items-center gap-3 mb-4">
                 <div className="relative flex-1"><Search className="absolute left-3.5 top-3 text-zinc-500" size={16}/><input type="text" value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Ürün adı veya barkod..." className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl py-3 pl-11 pr-4 outline-none focus:border-emerald-500 text-sm"/></div>
-                <button onClick={()=>{setCameraScanError('');setCameraLastDetected('');setCameraManualBarcode('');setCameraMode('init');setCameraRestartKey(v=>v+1);setCameraScanOpen(true);}} className="px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-2 border bg-zinc-800 text-zinc-300 border-zinc-700 hover:border-emerald-400 hover:text-emerald-400 transition-all"><Camera size={15}/> Kameradan</button>
                 <button onClick={()=>setOrderMode(!orderMode)} className={'px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-2 border transition-all '+(orderMode?'bg-orange-500 text-zinc-950 border-orange-500':'bg-zinc-800 text-zinc-400 border-zinc-700 hover:border-orange-400 hover:text-orange-400')}><ShoppingBag size={15}/>{orderMode?'Sipariş Modu':'Sipariş Oluştur'}</button>
               </div>
               {orderMode&&(
@@ -2907,41 +2460,6 @@ export default function App(){
                   </div>
                 )}
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {cameraScanOpen&&(
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-[255] p-4">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-[28px] w-full max-w-md shadow-2xl overflow-hidden">
-            <div className="p-5 border-b border-zinc-800 bg-zinc-950/50 flex justify-between items-center">
-              <h3 className="text-lg font-black text-white flex items-center gap-2"><Camera size={18} className="text-emerald-400"/> Kameradan Barkod Oku</h3>
-              <button onClick={()=>{setCameraScanOpen(false);setCameraManualBarcode('');setCameraLastDetected('');setCameraMode('init');}} className="text-zinc-500 hover:text-white bg-zinc-800 p-2 rounded-xl"><X size={18}/></button>
-            </div>
-            <div className="p-4 space-y-3">
-              <div id={CAMERA_SCAN_BOX_ID} className={(cameraMode==='html5'?'block ':'hidden ')+"w-full aspect-[3/4] bg-black rounded-2xl border border-zinc-700 overflow-hidden"}/>
-              <video ref={cameraVideoRef} autoPlay playsInline muted className={(cameraMode!=='html5'?'block ':'hidden ')+"w-full aspect-[3/4] bg-black rounded-2xl border border-zinc-700 object-cover"}/>
-              <div className="flex items-center justify-between text-[11px] text-zinc-500 px-1">
-                <span>Motor: {cameraMode==='html5'?'html5-qrcode':cameraMode==='native'?'native/ZXing fallback':'hazırlanıyor'}</span>
-                {cameraLastDetected&&<span className="font-mono text-zinc-400">Algılanan: {cameraLastDetected}</span>}
-              </div>
-              {cameraDevices.length>0&&(
-                <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-zinc-500 uppercase">Kamera Seç</label>
-                  <select value={selectedCameraId} onChange={e=>{setSelectedCameraId(e.target.value);setCameraScanError('');setCameraLastDetected('');setCameraMode('init');setCameraRestartKey(v=>v+1);}} className="w-full bg-zinc-950 border border-zinc-700 text-white p-2.5 rounded-xl outline-none focus:border-emerald-500 text-sm">
-                    {cameraDevices.map((cam,i)=><option key={cam.id||i} value={cam.id}>{cam.label}</option>)}
-                  </select>
-                </div>
-              )}
-              {cameraScanError?<div className="bg-red-500/10 border border-red-500/30 text-red-300 text-sm rounded-xl p-3">{cameraScanError}</div>:<p className="text-zinc-400 text-sm">Barkodu kameraya yaklaştır. Otomatik algılanınca sepete eklenir.</p>}
-              <div className="flex gap-2">
-                <input value={cameraManualBarcode} onChange={e=>setCameraManualBarcode(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&addProductByBarcode(cameraManualBarcode)){setCameraScanOpen(false);setCameraManualBarcode('');setCameraLastDetected('');}}} placeholder="Manuel barkod gir" className="flex-1 bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-emerald-500 text-sm font-mono"/>
-                <button onClick={()=>{if(addProductByBarcode(cameraManualBarcode)){setCameraScanOpen(false);setCameraManualBarcode('');setCameraLastDetected('');}}} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-4 rounded-xl font-black text-sm">Ekle</button>
-              </div>
-              <button onClick={()=>{setCameraScanError('');setCameraLastDetected('');setCameraMode('init');setCameraRestartKey(v=>v+1);}} className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-2.5 rounded-xl font-bold text-sm border border-zinc-700">Kamerayı Yeniden Başlat</button>
-              <p className="text-zinc-500 text-xs">Kamera açılmazsa linki WhatsApp/Instagram içinden değil, doğrudan Safari/Chrome’da aç.</p>
-              <button onClick={()=>{setCameraScanOpen(false);setCameraManualBarcode('');setCameraLastDetected('');setCameraMode('init');}} className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-3 rounded-xl font-bold text-sm">Kapat</button>
             </div>
           </div>
         </div>
