@@ -101,7 +101,7 @@ type PermKey = typeof ALL_PERMISSIONS[number]['key'];
 
 // ─── PARAŞÜT ──────────────────────────────────────────────────────────────
 const PARASUT_HELP = 'Satış Faturaları\n\n- Yıldız ile belirlenen alanları doldurmanız yeterlidir.\n- Bir faturaya birden fazla hizmet/ürün eklemek için faturayı takip eden satırlarda sadece hizmet/ürün detaylarını doldurun.\n- KDV Oranı 10 Temmuz 2023 itibariyle 0, 1, 10 veya 20 olmalıdır.\n- Tablonun sütun yapısını bozmayın.\n- Bu yardım metnini silmeyin.\n\n- Destek için destek@parasut.com veya 0212 292 04 94';
-const PARASUT_HEADERS=['MÜŞTERİ ÜNVANI *','FATURA İSMİ','FATURA TARİHİ','DÖVİZ CİNSİ','DÖVİZ KURU','VADE TARİHİ','TAHSİLAT TL KARŞILIĞI','FATURA TÜRÜ','FATURA SERİ','FATURA SIRA NO','KATEGORİ','HİZMET/ÜRÜN *','HİZMET/ÜRÜN AÇIKLAMASI','ÇIKIŞ DEPOSU *','MİKTAR *','BİRİM FİYATI *','İNDİRİM TUTARI','KDV ORANI *','ÖİV ORANI','KONAKLAMA VERGİSİ ORANI'];
+const PARASUT_HEADERS=['MÜŞTERİ ÜNVANI *','FATURA İSMİ','FATURA TARİHİ','DÖVİZ CİNSİ','DÖVİZ KURU','VADE TARİHİ','TAHSİLAT TL KARŞILIĞI','FATURA TÜRÜ','FATURA SERİ','FATURA SIRA NO','KATEGORİ','HİZMET/ÜRÜN *','HİZMET/ÜRÜN AÇIKLAMASI','ÇIKIŞ DEPOSU','MİKTAR *','BİRİM FİYATI *','İNDİRİM TUTARI','KDV ORANI *','ÖİV ORANI','KONAKLAMA VERGİSİ ORANI'];
 const nKdv=(r?:number)=>{const v=r??20;if(v===0)return 0;if(v<=1)return 1;if(v<=15)return 10;return 20;};
 const parseDT=(ds:string):Date=>{const[dp]=(ds??'').split(' ');const p=dp.split('.');if(p.length!==3)return new Date();return new Date(+p[2],+p[1]-1,+p[0]);};
 const xn=(v:number,z='General')=>({t:'n' as const,v,z});
@@ -112,7 +112,7 @@ const xe=()=>({t:'z' as const,v:null});
 async function exportParasut(arr:any[],fname?:string,opts:{firmName?:string;depotName?:string;invoicePrefix?:string}={}){
   const XLSX=await loadXLSX();
   const inv=arr.filter(s=>s.method!=='Tahsilat'&&(s.items||[]).length>0);
-  const depot=String(opts.depotName||'Merkez Depo').trim()||'Merkez Depo';
+  const depot=String(opts.depotName||'').trim();
   const invPrefix=String(opts.invoicePrefix||'FTR').trim()||'FTR';
   const rows:any[][]=[];
   let lineCount=0;
@@ -126,7 +126,7 @@ async function exportParasut(arr:any[],fname?:string,opts:{firmName?:string;depo
       const customer=String(sale.customerName||opts.firmName||'Perakende M��teri').trim();
       const invName=invPrefix+'-'+(String(idx+1).padStart(4,'0'));
       lineCount++;
-      if(ii===0) rows.push([xs(customer),xs(invName),xd(parseDT(sale.date)),xs('TRL'),xe(),xe(),xe(),xs('Fatura'),xs(invPrefix),xn(idx+1,'0'),xe(),xs(String(item.name||'�r�n')),xe(),xs(depot),xn(q),xn(up),xn(Number(sale.discountAmount)||0),xn(k,'#,##0.00'),xe(),xe()]);
+      if(ii===0) rows.push([xs(customer),xs(invName),xd(parseDT(sale.date)),xs('TRL'),xe(),xe(),xe(),xs('Fatura'),xs(invPrefix),xn(idx+1,'0'),xe(),xs(String(item.name||'�r�n')),xe(),(depot?xs(depot):xe()),xn(q),xn(up),xn(Number(sale.discountAmount)||0),xn(k,'#,##0.00'),xe(),xe()]);
       else rows.push([xe(),xe(),xe(),xe(),xe(),xe(),xe(),xe(),xe(),xe(),xe(),xs(String(item.name||'�r�n')),xe(),xe(),xn(q),xn(up),xn(0),xn(k,'#,##0.00'),xe(),xe()]);
     });
   });
@@ -378,7 +378,7 @@ export default function App(){
   const [parasutDepot,setParasutDepot]=useState(()=>localStorage.getItem('parasutDepot')||'');
   const parasutFirmTrim=parasutFirm.trim();
   const parasutDepotTrim=parasutDepot.trim();
-  const parasutReady=parasutFirmTrim.length>0&&parasutDepotTrim.length>0;
+  const parasutReady=parasutFirmTrim.length>0;
   const parasutOpts=useMemo(()=>({firmName:parasutFirmTrim,depotName:parasutDepotTrim,invoicePrefix:'FTR'}),[parasutFirmTrim,parasutDepotTrim]);
   const [staffLogFilter,setStaffLogFilter]=useState('all');
   const [staffLogDateFilter,setStaffLogDateFilter]=useState('');
@@ -504,7 +504,7 @@ export default function App(){
 
   const handleParasutExport=async(arr:any[],fileName?:string)=>{
     if(!parasutReady){
-      alert('Paraşüt aktarımı için önce Firma Ünvanı ve Çıkış Deposu alanlarını doldurun.');
+      alert('Paraşüt aktarımı için önce Firma Ünvanı alanını doldurun.');
       return null;
     }
     const stats=await exportParasut(arr,fileName,parasutOpts);
@@ -1978,7 +1978,7 @@ export default function App(){
               <div className="space-y-6">
                 <div className="bg-blue-500/10 border border-blue-500/30 rounded-2xl p-5">
                   <h3 className="font-black text-white text-lg mb-1 flex items-center gap-2"><FileSpreadsheet size={18} className="text-blue-400"/> Paraşüt Tam Entegrasyon</h3>
-                  <p className="text-zinc-400 text-sm">Satışlarınızı Paraşüt uyumlu Excel formatında dışa aktarın. Ayarları bir kez yapın, her seferinde otomatik kullanılır.</p><p className={"text-xs font-bold mt-2 "+(parasutReady?"text-emerald-400":"text-orange-400")}>{parasutReady?"Hazır: Aktarım yapabilirsiniz.":"Eksik ayar: Firma Ünvanı ve Çıkış Deposu gerekli."}</p>
+                  <p className="text-zinc-400 text-sm">Satışlarınızı Paraşüt uyumlu Excel formatında dışa aktarın. Ayarları bir kez yapın, her seferinde otomatik kullanılır.</p><p className={"text-xs font-bold mt-2 "+(parasutReady?"text-emerald-400":"text-orange-400")}>{parasutReady?"Hazır: Aktarım yapabilirsiniz.":"Eksik ayar: Firma Ünvanı gerekli. Depo opsiyonel."}</p>
                 </div>
                 {/* Paraşüt ayarları */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1986,7 +1986,7 @@ export default function App(){
                     <h4 className="font-black text-lg mb-4 border-b border-zinc-800 pb-3 flex items-center gap-2"><Settings size={15} className="text-zinc-400"/> Paraşüt Ayarları</h4>
                     <div className="space-y-4">
                       <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Firma Ünvanı (Paraşüt'teki adınız)</label><input value={parasutFirm} onChange={e=>{setParasutFirm(e.target.value);localStorage.setItem('parasutFirm',e.target.value);}} placeholder="ör. MERKEZ ŞUBE TİC. LTD. ŞTİ." className="w-full bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-blue-500 text-sm"/></div>
-                      <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Çıkış Deposu</label><input value={parasutDepot} onChange={e=>{setParasutDepot(e.target.value);localStorage.setItem('parasutDepot',e.target.value);}} placeholder="ör. Merkez Depo" className="w-full bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-blue-500 text-sm"/></div>
+                      <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Çıkış Deposu (opsiyonel)</label><input value={parasutDepot} onChange={e=>{setParasutDepot(e.target.value);localStorage.setItem('parasutDepot',e.target.value);}} placeholder="ör. Merkez Depo" className="w-full bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-blue-500 text-sm"/></div>
                       <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-2">
                         <p className="text-zinc-400 text-xs font-bold uppercase">KDV Normalizasyon Kuralları</p>
                         <div className="flex flex-wrap gap-2 text-xs">
@@ -2210,7 +2210,7 @@ export default function App(){
                     <h4 className="font-black text-lg mb-4 border-b border-zinc-800 pb-3 flex items-center gap-2"><Settings size={15} className="text-zinc-400"/> Paraşüt Bağlantı Ayarları</h4>
                     <div className="space-y-4">
                       <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Firma Ünvanı</label><input value={parasutFirm} onChange={e=>{setParasutFirm(e.target.value);localStorage.setItem('parasutFirm',e.target.value);}} placeholder="ör. MERKEZ ŞUBE TİC. LTD. ŞTİ." className="w-full bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-blue-500 text-sm"/><p className="text-zinc-600 text-xs">Paraşüt'teki firma adınızla tam eşleşmeli</p></div>
-                      <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Çıkış Deposu</label><input value={parasutDepot} onChange={e=>{setParasutDepot(e.target.value);localStorage.setItem('parasutDepot',e.target.value);}} placeholder="ör. Merkez Depo" className="w-full bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-blue-500 text-sm"/></div>
+                      <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Çıkış Deposu (opsiyonel)</label><input value={parasutDepot} onChange={e=>{setParasutDepot(e.target.value);localStorage.setItem('parasutDepot',e.target.value);}} placeholder="ör. Merkez Depo" className="w-full bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-blue-500 text-sm"/></div>
                       <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4 text-xs text-blue-300 space-y-1">
                         <p className="font-black">KDV Normalizasyon:</p>
                         <p>%8 → %10 · %18 → %20 (2023 reform uyumlu)</p>
@@ -2700,6 +2700,9 @@ export default function App(){
     </>
   );
 }
+
+
+
 
 
 
