@@ -9,7 +9,7 @@ import {
   Palette, Eye, Boxes, AlertTriangle, ArrowDownToLine, ChevronDown,
   Pencil, ArrowUpDown, Ban, ShoppingBag,
   FileText, Receipt, MessageSquare, Filter, LogIn, LogOut, UserCog,
-  Shield, RefreshCw, Tag
+  Shield, RefreshCw, Tag, Camera
 } from 'lucide-react';
 
 // ─── Guaranteed-safe icon aliases ──────────────────────────────────────────
@@ -299,6 +299,12 @@ export default function App(){
   const [isVeresiyeOpen,setIsVeresiyeOpen]=useState(false);
   const [printSale,setPrintSale]=useState<any>(null);
   const [mergedPrint,setMergedPrint]=useState<any>(null);
+  const [cameraScanOpen,setCameraScanOpen]=useState(false);
+  const [cameraScanError,setCameraScanError]=useState('');
+  const cameraVideoRef=useRef<HTMLVideoElement>(null);
+  const cameraStreamRef=useRef<MediaStream|null>(null);
+  const cameraFrameRef=useRef<number|null>(null);
+  const cameraBusyRef=useRef(false);
   // ── Order mode ────────────────────────────────────────────────────────
   const [orderMode,setOrderMode]=useState(false);
   const [orderCustomer,setOrderCustomer]=useState('');
@@ -1001,7 +1007,7 @@ export default function App(){
             </div>
 
             {/* Özet kartlar */}
-            <div className="grid grid-cols-4 gap-5 mb-8">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5 mb-8">
               <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"><p className="text-zinc-500 text-xs font-bold uppercase mb-1">Toplam Ciro</p><p className="text-3xl font-black text-emerald-400">₺{dashStats.ciro.toFixed(2)}</p><p className="text-zinc-600 text-xs mt-1">Son {dashPeriod} gün</p></div>
               <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"><p className="text-zinc-500 text-xs font-bold uppercase mb-1">Satış Adedi</p><p className="text-3xl font-black text-white">{dashStats.adet}</p><p className="text-zinc-600 text-xs mt-1">fatura</p></div>
               <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"><p className="text-zinc-500 text-xs font-bold uppercase mb-1">Ortalama Sepet</p><p className="text-3xl font-black text-blue-400">₺{dashStats.avgSale.toFixed(2)}</p></div>
@@ -1164,7 +1170,7 @@ export default function App(){
                 );
               })}
             </div>
-            <div className="grid grid-cols-4 gap-4 mb-6">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
               {(['bekliyor','hazirlaniyor','gönderildi','iptal'] as const).map(s=>{const cnt=orders.filter(o=>o.status===s).length;const sc=statusConfig[s];return(<div key={s} className={'p-4 rounded-2xl border '+(sc.bg.replace('/20','/30'))+' '+(sc.bg)}><p className={'text-xs font-bold uppercase mb-1 '+(sc.color)}>{sc.label}</p><p className={'text-3xl font-black '+(sc.color)}>{cnt}</p></div>);})}
             </div>
             <div className="space-y-4">
@@ -1194,7 +1200,7 @@ export default function App(){
                         </>}
                         {order.status==='hazirlaniyor'&&<button onClick={()=>handleOrderStatus(order.id,'gönderildi')} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1"><SendHorizonal size={11}/> Gönderildi</button>}
                         {(order.status==='bekliyor'||order.status==='hazirlaniyor')&&<button onClick={()=>handleOrderStatus(order.id,'iptal')} className="bg-zinc-800 hover:bg-red-600 text-zinc-400 hover:text-white px-3 py-1.5 rounded-lg text-xs font-bold border border-zinc-700 flex items-center gap-1"><Ban size={11}/> İptal</button>}
-                        {(order.status==='iptal'||order.status==='gönderildi')&&<button onClick={()=>{if(window.confirm('Sipariş kalıcı olarak silinsin mi?'))deleteDoc(doc(db,'orders',order.id));}} className="bg-zinc-800 hover:bg-red-600 text-zinc-400 hover:text-white px-3 py-1.5 rounded-lg text-xs font-bold border border-zinc-700 flex items-center gap-1"><Trash2 size={11}/> Sil</button>}
+                        <button onClick={()=>{const msg=order.status==='gönderildi'?'Sipariş silinsin mi? (Satış kaydı ayrı kalır)':'Sipariş kalıcı olarak silinsin mi?';if(window.confirm(msg))deleteDoc(doc(db,'orders',order.id));}} className="bg-zinc-800 hover:bg-red-600 text-zinc-400 hover:text-white px-3 py-1.5 rounded-lg text-xs font-bold border border-zinc-700 flex items-center gap-1"><Trash2 size={11}/> Sil</button>
                         {order.status==='gönderildi'&&<span className="text-emerald-500 text-xs font-bold flex items-center gap-1"><CheckCircle size={12}/> Satışa Dönüştürüldü</span>}
                       </div>
                     </div>
@@ -1213,8 +1219,8 @@ export default function App(){
 
         {/* ═══ TEKLİFLER ══════════════════════════════════════════════════ */}
         {activePage==='quotes'&&(
-          <div className="flex w-full h-full overflow-hidden">
-            <div className="w-[420px] bg-zinc-900 border-r border-zinc-800 flex flex-col shrink-0">
+          <div className="flex flex-col lg:flex-row w-full h-full overflow-hidden">
+            <div className="w-full lg:w-[420px] max-h-[60vh] lg:max-h-none bg-zinc-900 border-r border-zinc-800 flex flex-col shrink-0">
               <div className="p-5 border-b border-zinc-800 flex items-center justify-between shrink-0">
                 <h2 className="text-lg font-black flex items-center gap-2"><FileEdit className="text-purple-400" size={18}/> Teklif Oluştur</h2>
                 <span className="text-zinc-600 text-xs">{quoteDraft.length} ürün</span>
@@ -1466,7 +1472,7 @@ export default function App(){
                   </div>
                 </div>
                     <>
-                      <div className="grid grid-cols-3 gap-4 mb-5">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
                         <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl"><p className="text-zinc-500 text-xs font-bold uppercase mb-1">Toplam</p><p className="text-2xl font-black text-white">{filteredMovements.filtered.length}</p></div>
                         <div className="bg-blue-500/10 border border-blue-500/30 p-4 rounded-2xl"><p className="text-blue-400 text-xs font-bold uppercase mb-1">↓ Giriş</p><p className="text-2xl font-black text-blue-400">₺{filteredMovements.tIn.toFixed(2)}</p></div>
                         <div className="bg-red-500/10 border border-red-500/30 p-4 rounded-2xl"><p className="text-red-400 text-xs font-bold uppercase mb-1">↑ Çıkış</p><p className="text-2xl font-black text-red-400">₺{filteredMovements.tOut.toFixed(2)}</p></div>
@@ -1494,7 +1500,7 @@ export default function App(){
             {activePage==='stock.tracking'&&(
               <div className="flex-1 overflow-y-auto p-7">
                 <h2 className="text-2xl font-black flex items-center gap-2 mb-6"><Boxes className="text-emerald-500"/> Stok Takibi</h2>
-                <div className="grid grid-cols-4 gap-5 mb-6">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-5 mb-6">
                   <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"><p className="text-zinc-500 text-xs font-bold uppercase mb-1">Toplam Ürün</p><p className="text-3xl font-black text-white">{products.length}</p></div>
                   <div className={outOfStock>0?"bg-red-500/10 border border-red-500/30 p-5 rounded-2xl":"bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"}><p className={outOfStock>0?"text-xs font-bold uppercase mb-1 text-red-400":"text-xs font-bold uppercase mb-1 text-zinc-500"}>Tükenen</p><p className={outOfStock>0?"text-3xl font-black text-red-500":"text-3xl font-black text-zinc-600"}>{outOfStock}</p></div>
                   <div className={lowStock>0?"bg-orange-500/10 border border-orange-500/30 p-5 rounded-2xl":"bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"}><p className={lowStock>0?"text-xs font-bold uppercase mb-1 text-orange-400":"text-xs font-bold uppercase mb-1 text-zinc-500"}>Kritik (≤{lowStockLimit})</p><p className={lowStock>0?"text-3xl font-black text-orange-400":"text-3xl font-black text-zinc-600"}>{lowStock}</p></div>
@@ -1681,7 +1687,7 @@ export default function App(){
             {showPurchaseForm&&(
               <form onSubmit={handleSavePurchase} className="bg-zinc-900 border border-blue-900/40 p-6 rounded-3xl mb-6 space-y-5 animate-in slide-in-from-top duration-300">
                 <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-3 text-sm text-blue-300">💡 Ürünleri ürün deposundan seç — tedarikçi adı ile stok adı farklı olabilir.</div>
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Tedarikçi</label><input value={purchaseSupplier} onChange={e=>setPurchaseSupplier(e.target.value)} className="w-full bg-zinc-950 border border-zinc-700 p-3 rounded-xl outline-none focus:border-blue-500 text-white text-sm" placeholder="Tedarikçi adı..."/></div>
                   <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Tarih</label><input type="date" value={purchaseDate} onChange={e=>setPurchaseDate(e.target.value)} className="w-full bg-zinc-950 border border-zinc-700 p-3 rounded-xl outline-none focus:border-blue-500 text-white text-sm"/></div>
                   <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Fatura No</label><input value={purchaseNote} onChange={e=>setPurchaseNote(e.target.value)} className="w-full bg-zinc-950 border border-zinc-700 p-3 rounded-xl outline-none focus:border-blue-500 text-white text-sm" placeholder="INV-2026-001..."/></div>
@@ -1827,7 +1833,7 @@ export default function App(){
 
             {reportTab==='genel'&&(
               <>
-                <div className="grid grid-cols-4 gap-5 mb-8">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5 mb-8">
                   <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"><div className="text-zinc-400 font-bold text-xs mb-1 uppercase">Brüt Ciro</div><div className="text-3xl font-black text-white">₺{totalIncome.toFixed(2)}</div></div>
                   <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"><div className="text-blue-400 font-bold text-xs mb-1 uppercase">SMM</div><div className="text-3xl font-black text-white">₺{totalCogs.toFixed(2)}</div></div>
                   <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"><div className="text-red-500 font-bold text-xs mb-1 uppercase">Giderler</div><div className="text-3xl font-black text-white">₺{totalExpenseSum.toFixed(2)}</div></div>
@@ -1871,7 +1877,7 @@ export default function App(){
                         <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"><p className="text-red-400 text-xs font-bold uppercase mb-1">Giderler</p><p className="text-3xl font-black text-white">₺{monthlyStats.exp.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p></div>
                         <div className={'p-5 rounded-2xl border-2 '+(monthlyStats.kar>=0?'bg-emerald-500/10 border-emerald-500/30':'bg-red-500/10 border-red-500/30')}><p className={'text-xs font-bold uppercase mb-1 '+(monthlyStats.kar>=0?'text-emerald-400':'text-red-400')}>Net Kâr</p><p className={'text-3xl font-black '+(monthlyStats.kar>=0?'text-emerald-400':'text-red-400')}>₺{monthlyStats.kar.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p>{monthlyStats.ciro>0&&<p className="text-zinc-600 text-xs mt-1">Marj: %{((monthlyStats.kar/monthlyStats.ciro)*100).toFixed(1)}</p>}</div>
                       </div>
-                      <div className="grid grid-cols-3 gap-4">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div className="bg-emerald-500/10 border border-emerald-500/30 p-4 rounded-2xl"><p className="text-emerald-400 text-xs font-bold uppercase mb-1">💵 Nakit</p><p className="text-2xl font-black text-emerald-400">₺{monthlyStats.nakit.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p></div>
                         <div className="bg-blue-500/10 border border-blue-500/30 p-4 rounded-2xl"><p className="text-blue-400 text-xs font-bold uppercase mb-1">💳 Kart</p><p className="text-2xl font-black text-blue-400">₺{monthlyStats.kart.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p></div>
                         <div className="bg-orange-500/10 border border-orange-500/30 p-4 rounded-2xl"><p className="text-orange-400 text-xs font-bold uppercase mb-1">📋 Veresiye</p><p className="text-2xl font-black text-orange-400">₺{monthlyStats.veresiye.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p></div>
@@ -1974,7 +1980,7 @@ export default function App(){
                   <div className="bg-blue-500/10 border border-blue-500/30 p-5 rounded-2xl"><p className="text-blue-400 text-xs font-bold uppercase mb-1">💳 Kart</p><p className="text-3xl font-black text-blue-400">₺{dayKart.toFixed(2)}</p></div>
                   <div className="bg-orange-500/10 border border-orange-500/30 p-5 rounded-2xl"><p className="text-orange-400 text-xs font-bold uppercase mb-1">📋 Veresiye</p><p className="text-3xl font-black text-orange-400">₺{dayVeresiye.toFixed(2)}</p></div>
                 </div>
-                <div className="grid grid-cols-3 gap-5 mb-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-6">
                   <div className="bg-red-500/10 border border-red-500/30 p-5 rounded-2xl"><p className="text-red-400 text-xs font-bold uppercase mb-1">Günlük Gider</p><p className="text-3xl font-black text-red-400">₺{dayExpense.toFixed(2)}</p></div>
                   <div className={'p-5 rounded-2xl border-2 '+(dayCashNet>=0?'bg-emerald-500/10 border-emerald-500/40':'bg-red-500/10 border-red-500/40')}><p className={'text-xs font-bold uppercase mb-1 '+(dayCashNet>=0?'text-emerald-400':'text-red-400')}>💰 Net Kasa</p><p className={'text-3xl font-black '+(dayCashNet>=0?'text-emerald-400':'text-red-400')}>₺{dayCashNet.toFixed(2)}</p><p className="text-zinc-600 text-xs mt-1">Nakit+Tahsilat-Gider</p></div>
                   <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"><p className="text-zinc-400 text-xs font-bold uppercase mb-1">Satış Adedi</p><p className="text-3xl font-black text-white">{reportSales.filter(s=>s.method!=='Tahsilat').length}</p></div>
@@ -2176,8 +2182,8 @@ export default function App(){
               </div>
             )}
             {settingsTab==='fis'&&(
-            <div className="flex flex-1 overflow-hidden">
-            <div className="w-[355px] shrink-0 bg-zinc-900 border-r border-zinc-800 flex flex-col overflow-hidden">
+            <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
+            <div className="w-full lg:w-[355px] max-h-[58vh] lg:max-h-none shrink-0 bg-zinc-900 border-r border-zinc-800 flex flex-col overflow-hidden">
               <div className="p-4 border-b border-zinc-800 flex items-center justify-between shrink-0"><div><h2 className="text-base font-black flex items-center gap-2"><Palette size={15} className="text-emerald-500"/> Fiş Tasarımı</h2><p className="text-zinc-500 text-xs">Canlı önizleme sağda</p></div><button onClick={()=>setDraftSettings({...DEFAULT_SETTINGS})} className="text-zinc-500 hover:text-white bg-zinc-800 p-1.5 rounded-xl border border-zinc-700"><RotateCcw size={12}/></button></div>
               <div className="flex-1 overflow-y-auto p-4 space-y-4">
                 <div className="space-y-2"><h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">📏 Kağıt</h3><div className="grid grid-cols-2 gap-2">{(Object.keys(PAPER_LABELS) as PaperSize[]).map(ps=><button key={ps} onClick={()=>upDraft('paperSize',ps)} className={'py-2.5 px-3 rounded-xl text-xs font-bold border transition-all text-left '+(draftSettings.paperSize===ps?'bg-emerald-500 text-zinc-950 border-emerald-500':'bg-zinc-800 text-zinc-400 border-zinc-700')}><div className="font-black">{PAPER_LABELS[ps]}</div></button>)}</div></div>
@@ -2408,7 +2414,7 @@ export default function App(){
             </div>
             <div className="flex-1 overflow-y-auto p-6 space-y-5">
               {/* Anlık fiyat özeti */}
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="bg-blue-500/10 border border-blue-500/30 p-4 rounded-2xl">
                   <p className="text-blue-400 text-xs font-bold uppercase mb-1">Alış Fiyatı</p>
                   <p className="text-2xl font-black text-white">₺{(priceHistoryProduct.costPrice||0).toFixed(2)}</p>
@@ -2510,7 +2516,7 @@ export default function App(){
                 <button onClick={()=>setSelectedCustomer(null)} className="text-zinc-500 hover:text-white bg-zinc-800 p-2 rounded-xl"><X size={20}/></button>
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-px bg-zinc-800 border-b border-zinc-800 shrink-0"><div className="bg-zinc-900 p-4 text-center"><p className="text-zinc-500 text-xs font-bold uppercase mb-1">Toplam Alışveriş</p><p className="text-2xl font-black text-white">₺{custTotalSpend.toFixed(2)}</p></div><div className="bg-zinc-900 p-4 text-center"><p className="text-zinc-500 text-xs font-bold uppercase mb-1">Fatura Adedi</p><p className="text-2xl font-black text-white">{customerSales.length}</p></div><div className="bg-zinc-900 p-4 text-center"><p className="text-zinc-500 text-xs font-bold uppercase mb-1">Toplam Tahsilat</p><p className="text-2xl font-black text-emerald-400">₺{custTotalCollected.toFixed(2)}</p></div></div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-px bg-zinc-800 border-b border-zinc-800 shrink-0"><div className="bg-zinc-900 p-4 text-center"><p className="text-zinc-500 text-xs font-bold uppercase mb-1">Toplam Alışveriş</p><p className="text-2xl font-black text-white">₺{custTotalSpend.toFixed(2)}</p></div><div className="bg-zinc-900 p-4 text-center"><p className="text-zinc-500 text-xs font-bold uppercase mb-1">Fatura Adedi</p><p className="text-2xl font-black text-white">{customerSales.length}</p></div><div className="bg-zinc-900 p-4 text-center"><p className="text-zinc-500 text-xs font-bold uppercase mb-1">Toplam Tahsilat</p><p className="text-2xl font-black text-emerald-400">₺{custTotalCollected.toFixed(2)}</p></div></div>
             <div className="border-b border-zinc-800 flex items-center shrink-0">
               {([['sales','Fatura Geçmişi'],['history','Ürün Geçmişi'],['orders','Siparişler']] as const).map(([tab,label])=>(
                 <button key={tab} onClick={()=>setCustDetailTab(tab)} className={'px-6 py-3.5 font-bold text-sm border-b-2 transition-all '+(custDetailTab===tab?'border-emerald-500 text-emerald-400':'border-transparent text-zinc-500 hover:text-zinc-300')}>{label}</button>
