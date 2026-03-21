@@ -343,6 +343,7 @@ export default function App(){
   const [cameraScanOpen,setCameraScanOpen]=useState(false);
   const [cameraMode,setCameraMode]=useState<'init'|'html5'|'native'>('init');
   const [cameraScanError,setCameraScanError]=useState('');
+  const [cameraLastDetected,setCameraLastDetected]=useState('');
   const [cameraManualBarcode,setCameraManualBarcode]=useState('');
   const cameraVideoRef=useRef<HTMLVideoElement>(null);
   const cameraStreamRef=useRef<MediaStream|null>(null);
@@ -772,13 +773,36 @@ export default function App(){
 
   // ── Cart ──────────────────────────────────────────────────────────────
   const addToCart=(p:any)=>{setCart(prev=>{const ex=prev.find((i:any)=>i.id===p.id);if(ex)return prev.map((i:any)=>i.id===p.id?{...i,qty:i.qty+1}:i);return[...prev,{...p,qty:1}];});setSearchQuery('');};
+  const normalizeBarcodeValue=(code:string)=>(code||'').normalize('NFKC').replace(/[\s\-_.]/g,'').trim();
+  const barcodeVariants=(code:string)=>{
+    const base=normalizeBarcodeValue(code);
+    const vars=new Set<string>();
+    if(!base) return [];
+    vars.add(base);
+    const digits=base.replace(/\D/g,'');
+    if(digits.length===base.length){
+      vars.add(digits);
+      if(digits.length===12) vars.add('0'+digits);
+      if(digits.length===13&&digits.startsWith('0')) vars.add(digits.slice(1));
+      if(digits.length===8) vars.add('00000'+digits);
+    }
+    return Array.from(vars);
+  };
+  const findProductByBarcode=(rawCode:string)=>{
+    const codeVars=barcodeVariants(rawCode);
+    if(codeVars.length===0) return null;
+    return products.find((p:any)=>{
+      const pVars=barcodeVariants(String(p.barcode||''));
+      return codeVars.some(v=>pVars.includes(v));
+    })||null;
+  };
   const addProductByBarcode=(rawCode:string)=>{
-    const code=(rawCode||'').trim();
+    const code=normalizeBarcodeValue(rawCode);
     if(!code){
       setCameraScanError('Barkod boş olamaz.');
       return false;
     }
-    const found=products.find((p:any)=>String(p.barcode||'').trim()===code);
+    const found=findProductByBarcode(code);
     if(!found){
       setCameraScanError('Bu barkod sistemde kayıtlı değil: '+code);
       return false;
