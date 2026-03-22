@@ -400,8 +400,9 @@ export default function App(){
   const [bulkDone,setBulkDone]=useState(false);
   // ── Ürün Varyantları ──────────────────────────────────────────────────
   const [variantProduct,setVariantProduct]=useState<any>(null);
-  const [variantDraft,setVariantDraft]=useState<{name:string;barcode:string;stock:string}[]>([]);
   const [variantGroupName,setVariantGroupName]=useState('');
+  const [variantSearch,setVariantSearch]=useState('');
+  const [variantSelectedIds,setVariantSelectedIds]=useState<Set<string>>(new Set());
   // ── Fiyat Geçmişi ─────────────────────────────────────────────────────
   const [priceHistoryProduct,setPriceHistoryProduct]=useState<any>(null);
   const [priceHistory,setPriceHistory]=useState<any[]>([]);
@@ -474,6 +475,45 @@ export default function App(){
   const custCatColor=(name:string)=>custCategories.find(c=>c.name===name)?.color||'#6b7280';
   const calcGross=(net:string,tax:string)=>net?(parseFloat(net)*(1+parseFloat(tax)/100)).toFixed(2):'0.00';
   const roleLabel=(staff:any)=>staff?.role==='admin'?'🔑 Admin (Tam Yetki)':'⚙️ Özel ('+((staff?.permissions||[]).length)+' yetki)';
+  const getVariantGroupKey=(product:any)=>{
+    const groupId=String(product?.variantGroupId||'').trim();
+    if(groupId)return 'gid:'+groupId;
+    const groupName=String(product?.variantGroup||'').trim().toLowerCase();
+    return groupName?'name:'+groupName:'';
+  };
+  const getVariantGroupMembers=(product:any)=>{
+    const key=getVariantGroupKey(product);
+    if(!key)return [];
+    return products.filter(p=>getVariantGroupKey(p)===key);
+  };
+  const getVariantPricingTargets=(product:any)=>{
+    const members=getVariantGroupMembers(product);
+    return members.length>0?members:[product];
+  };
+  const getVariantPricePatch=(product:any)=>{
+    const costPrice=Number(product?.costPrice);
+    const netPrice=Number(product?.netPrice);
+    const grossPrice=Number(product?.grossPrice);
+    const parsedTax=Number.parseInt(String(product?.taxRate??20),10);
+    return {
+      costPrice:Number.isFinite(costPrice)?costPrice:0,
+      netPrice:Number.isFinite(netPrice)?netPrice:0,
+      taxRate:Number.isNaN(parsedTax)?20:parsedTax,
+      grossPrice:Number.isFinite(grossPrice)?grossPrice:0,
+    };
+  };
+  const toggleBulkSelection=(product:any)=>{
+    const targetIds=getVariantPricingTargets(product).map((item:any)=>item.id);
+    setBulkSelected(prev=>{
+      const next=new Set(prev);
+      const shouldSelect=targetIds.some((id:string)=>!next.has(id));
+      targetIds.forEach((id:string)=>{
+        if(shouldSelect)next.add(id);
+        else next.delete(id);
+      });
+      return next;
+    });
+  };
   const canDo=(action:string)=>{
     if(!currentStaff)return false;
     if(currentStaff.role==='admin')return true;
@@ -510,6 +550,51 @@ export default function App(){
     const stats=await exportParasut(arr,fileName,parasutOpts);
     if(stats)alert('Paraşüt dosyası oluşturuldu: '+stats.invoiceCount+' fatura, '+stats.lineCount+' satır.');
     return stats;
+  };
+
+  useEffect(()=>{
+    if(!variantProduct){
+      setVariantGroupName('');
+      setVariantSearch('');
+      setVariantSelectedIds(new Set());
+      return;
+    }
+    const members=getVariantGroupMembers(variantProduct);
+    setVariantGroupName(String(variantProduct.variantGroup||'').trim());
+    setVariantSearch('');
+    setVariantSelectedIds(new Set((members.length>0?members:[variantProduct]).map((p:any)=>p.id)));
+  },[variantProduct]);
+
+  const variantSelectedProducts=useMemo(()=>{
+    if(!variantProduct)return [];
+    const ids=new Set<string>([variantProduct.id,...Array.from(variantSelectedIds)]);
+    return products
+      .filter(p=>ids.has(p.id))
+      .sort((a,b)=>{
+        if(a.id===variantProduct.id)return -1;
+        if(b.id===variantProduct.id)return 1;
+        return String(a.name||'').localeCompare(String(b.name||''),'tr');
+      });
+  },[products,variantProduct,variantSelectedIds]);
+
+  const variantCandidates=useMemo(()=>{
+    if(!variantProduct)return [];
+    const q=variantSearch.trim().toLowerCase();
+    return products
+      .filter(p=>p.id!==variantProduct.id)
+      .filter(p=>!q||(p.name||'').toLowerCase().includes(q)||(p.barcode||'').includes(q)||String(p.variantGroup||'').toLowerCase().includes(q))
+      .sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'tr'));
+  },[products,variantProduct,variantSearch]);
+
+  const toggleVariantSelection=(productId:string)=>{
+    if(!variantProduct||productId===variantProduct.id)return;
+    setVariantSelectedIds(prev=>{
+      const next=new Set(prev);
+      if(next.has(productId))next.delete(productId);
+      else next.add(productId);
+      next.add(variantProduct.id);
+      return next;
+    });
   };
 
   // ── Cart ──────────────────────────────────────────────────────────────
@@ -635,8 +720,17 @@ export default function App(){
     e.preventDefault();if(!editingProduct)return;
     const net=parseFloat(editForm.netPrice)||0,tax=parseInt(editForm.taxRate)||0;
     const gross=editForm.grossPrice?parseFloat(editForm.grossPrice):parseFloat((net*(1+tax/100)).toFixed(2));
-    await updateDoc(doc(db,'products',editingProduct.id),{name:editForm.name,barcode:editForm.barcode,unit:editForm.unit,category:editForm.category,costPrice:parseFloat(editForm.costPrice)||0,netPrice:net,taxRate:tax,grossPrice:gross,stock:parseInt(editForm.stock)||0});
-    await logAction('ÜRÜN_DÜZENLE',(editForm.name)+' güncellendi');
+    const ownPatch={name:editForm.name,barcode:editForm.barcode,unit:editForm.unit,category:editForm.category,stock:parseInt(editForm.stock)||0};
+    const pricePatch={costPrice:parseFloat(editForm.costPrice)||0,netPrice:net,taxRate:tax,grossPrice:gross};
+    const members=getVariantPricingTargets(editingProduct);
+    if(members.length>1){
+      for(const member of members){
+        await updateDoc(doc(db,'products',member.id),member.id===editingProduct.id?{...ownPatch,...pricePatch}:pricePatch);
+      }
+    }else{
+      await updateDoc(doc(db,'products',editingProduct.id),{...ownPatch,...pricePatch});
+    }
+    await logAction('ÜRÜN_DÜZENLE',(editForm.name)+' güncellendi'+(members.length>1?' - '+members.length+' varyantta fiyat eşitlendi':''));
     setEditingProduct(null);
   };
 
@@ -900,18 +994,27 @@ export default function App(){
   const handleBulkPrice=async()=>{
     if(bulkSelected.size===0||!bulkPct)return alert('Ürün seçin ve oran girin.');
     const pct=parseFloat(bulkPct)/100;
+    const processedGroups=new Set<string>();
+    let touchedCount=0;
     for(const id of bulkSelected){
       const p=products.find(p=>p.id===id);if(!p)continue;
+      const groupKey=getVariantGroupKey(p)||('self:'+p.id);
+      if(processedGroups.has(groupKey))continue;
+      processedGroups.add(groupKey);
       const cur=p[bulkField]||0;
       const newVal=bulkType==='zam'?parseFloat((cur*(1+pct)).toFixed(2)):parseFloat((cur*(1-pct)).toFixed(2));
-      const upd:any={[bulkField]:newVal};
-      // grossPrice değişince netPrice de güncelle
-      if(bulkField==='grossPrice'){upd.netPrice=parseFloat((newVal/(1+(p.taxRate||20)/100)).toFixed(2));}
-      // Fiyat geçmişi yaz
-      await addDoc(collection(db,'priceHistory'),{productId:id,productName:p.name,field:bulkField,oldVal:cur,newVal,pct:parseFloat(bulkPct),type:bulkType,date:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name});
-      await updateDoc(doc(db,'products',id),upd);
+      const syncTargets=getVariantPricingTargets(p);
+      touchedCount+=syncTargets.length;
+      for(const target of syncTargets){
+        const upd:any={[bulkField]:newVal};
+        if(bulkField==='grossPrice'){
+          upd.netPrice=parseFloat((newVal/(1+((target.taxRate||p.taxRate||20)/100))).toFixed(2));
+        }
+        await addDoc(collection(db,'priceHistory'),{productId:target.id,productName:target.name,field:bulkField,oldVal:target[bulkField]||0,newVal,pct:parseFloat(bulkPct),type:bulkType,date:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name});
+        await updateDoc(doc(db,'products',target.id),upd);
+      }
     }
-    await logAction('TOPLU_FİYAT',(bulkSelected.size)+' ürüne %'+(bulkPct)+' '+(bulkType),0);
+    await logAction('TOPLU_FİYAT',(touchedCount||bulkSelected.size)+' ürüne %'+(bulkPct)+' '+(bulkType),0);
     setBulkDone(true);setTimeout(()=>setBulkDone(false),2500);setBulkSelected(new Set());setBulkPct('');
   };
 
@@ -928,10 +1031,31 @@ export default function App(){
   // ── Varyant kaydet ────────────────────────────────────────────────────
   const handleSaveVariants=async()=>{
     if(!variantProduct)return;
-    const valid=variantDraft.filter(v=>v.name.trim());
-    await updateDoc(doc(db,'products',variantProduct.id),{variants:valid,variantGroup:variantGroupName||'Varyant'});
-    await logAction('VARYANT_KAYDET',(variantProduct.name)+' - '+(valid.length)+' varyant');
-    setVariantProduct(null);setVariantDraft([]);
+    const selectedIds=Array.from(new Set<string>([variantProduct.id,...Array.from(variantSelectedIds)]));
+    const currentMembers=getVariantGroupMembers(variantProduct);
+    if(selectedIds.length<2){
+      const cleanupTargets=currentMembers.length>0?currentMembers:[variantProduct];
+      for(const member of cleanupTargets){
+        await updateDoc(doc(db,'products',member.id),{variantGroup:'',variantGroupId:''});
+      }
+      await logAction('VARYANT_KAYDET',(variantProduct.name)+' varyant grubu dagitildi');
+      setVariantProduct(null);setVariantGroupName('');setVariantSearch('');setVariantSelectedIds(new Set());
+      return;
+    }
+    const groupName=variantGroupName.trim();
+    if(!groupName)return alert('Varyant grubu için bir ad girin.');
+    const groupId=String(variantProduct.variantGroupId||('vg-'+Date.now()));
+    const basePricePatch=getVariantPricePatch(variantProduct);
+    for(const member of currentMembers){
+      if(!selectedIds.includes(member.id)){
+        await updateDoc(doc(db,'products',member.id),{variantGroup:'',variantGroupId:''});
+      }
+    }
+    for(const productId of selectedIds){
+      await updateDoc(doc(db,'products',productId),{variantGroup:groupName,variantGroupId:groupId,...basePricePatch});
+    }
+    await logAction('VARYANT_KAYDET',groupName+' - '+selectedIds.length+' urun baglandi ve fiyatlar ortaklandi');
+    setVariantProduct(null);setVariantGroupName('');setVariantSearch('');setVariantSelectedIds(new Set());
   };
 
   // ── Receipt settings ──────────────────────────────────────────────────
@@ -1482,7 +1606,10 @@ export default function App(){
                         const sc=stockColor(p.stock||0);
                         return(
                           <tr key={p.id} className="hover:bg-zinc-800/30 transition-colors">
-                            <td className="p-4 font-bold text-emerald-400 text-sm">{p.name||'-'}</td>
+                            <td className="p-4">
+                              <div className="font-bold text-emerald-400 text-sm">{p.name||'-'}</div>
+                              {p.variantGroup&&<div className="text-[10px] font-bold text-purple-400 mt-1">{p.variantGroup}</div>}
+                            </td>
                             <td className="p-4 font-mono text-zinc-500 text-xs">{p.barcode||'-'}</td>
                             <td className="p-4">{p.category?<span className="text-xs font-bold px-2 py-1 rounded-full" style={catStyleOf(p.category||'')}>{p.category}</span>:<span className="text-zinc-700 text-xs">—</span>}</td>
                             <td className="p-4 text-sm text-zinc-400">{p.unit||'-'}</td>
@@ -1492,7 +1619,7 @@ export default function App(){
                             <td className="p-4 text-center">
                               <div className="flex items-center justify-center gap-1">
                                 <button onClick={()=>openEditProduct(p)} className="text-zinc-600 hover:text-emerald-400 p-1.5 rounded-lg hover:bg-zinc-800" title="Düzenle"><Pencil size={13}/></button>
-                                <button onClick={()=>{setVariantProduct(p);setVariantDraft((p.variants||[]).length>0?[...p.variants]:[{name:'',barcode:'',stock:''}]);setVariantGroupName(p.variantGroup||'');}} className="text-zinc-600 hover:text-purple-400 p-1.5 rounded-lg hover:bg-zinc-800" title="Varyantlar"><Boxes size={13}/></button>
+                                <button onClick={()=>setVariantProduct(p)} className="text-zinc-600 hover:text-purple-400 p-1.5 rounded-lg hover:bg-zinc-800" title="Varyantlar"><Boxes size={13}/></button>
                                 <button onClick={async()=>{setPriceHistoryProduct(p);await loadPriceHistory(p.id);}} className="text-zinc-600 hover:text-yellow-400 p-1.5 rounded-lg hover:bg-zinc-800" title="Fiyat Geçmişi"><TrendingUp size={13}/></button>
                                 <button onClick={()=>deleteDoc(doc(db,'products',p.id))} className="text-zinc-600 hover:text-red-500 p-1.5 rounded-lg hover:bg-zinc-800" title="Sil"><Trash2 size={13}/></button>
                               </div>
@@ -1654,9 +1781,9 @@ export default function App(){
             {activePage==='stock.bulk'&&(
               <div className="flex-1 overflow-y-auto p-7">
                 <div className="flex items-center justify-between mb-6">
-                  <div>
+                 <div>
                     <h2 className="text-2xl font-black flex items-center gap-2"><Zap className="text-yellow-400"/> Toplu Fiyat Güncelleme</h2>
-                    <p className="text-zinc-500 text-sm mt-0.5">Seçili ürünlere toplu zam veya indirim uygula</p>
+                    <p className="text-zinc-500 text-sm mt-0.5">Secili urunlere toplu zam veya indirim uygula. Varyant grubundan bir urun secildiginde ayni fiyat grubu birlikte islenir.</p>
                   </div>
                   <div className="flex items-center gap-3">
                     <div className="flex gap-2">
@@ -1693,14 +1820,18 @@ export default function App(){
                     </thead>
                     <tbody className="divide-y divide-zinc-800/50">
                       {products.map(p=>{
-                        const isSel=bulkSelected.has(p.id);
+                        const variantTargets=getVariantPricingTargets(p);
+                        const isSel=variantTargets.every((target:any)=>bulkSelected.has(target.id));
                         const cur=p[bulkField]||0;
                         const pct=parseFloat(bulkPct)||0;
                         const zamMult=(100+pct)*0.01;const indirimMult=(100-pct)*0.01;const newVal=pct>0?parseFloat((cur*(bulkType==='zam'?zamMult:indirimMult)).toFixed(2)):null;
                         return(
-                          <tr key={p.id} onClick={()=>setBulkSelected(prev=>{const n=new Set(prev);n.has(p.id)?n.delete(p.id):n.add(p.id);return n;})} className={'cursor-pointer transition-colors '+(isSel?'bg-yellow-500/5 hover:bg-yellow-500/10':'hover:bg-zinc-800/30')}>
+                          <tr key={p.id} onClick={()=>toggleBulkSelection(p)} className={'cursor-pointer transition-colors '+(isSel?'bg-yellow-500/5 hover:bg-yellow-500/10':'hover:bg-zinc-800/30')}>
                             <td className="p-4"><div className={'w-5 h-5 rounded-lg border-2 flex items-center justify-center '+(isSel?'bg-emerald-500 border-emerald-500':'border-zinc-600')}>{isSel&&<CheckCircle size={12} className="text-zinc-950"/>}</div></td>
-                            <td className="p-4 font-bold text-white text-sm">{p.name}</td>
+                            <td className="p-4">
+                              <div className="font-bold text-white text-sm">{p.name}</div>
+                              {p.variantGroup&&<div className="text-[10px] font-bold text-purple-400 mt-1">{p.variantGroup} · ortak fiyat</div>}
+                            </td>
                             <td className="p-4">{p.category?<span className="text-xs font-bold px-2 py-0.5 rounded-full" style={catStyleOf(p.category||'')}>{p.category}</span>:<span className="text-zinc-700 text-xs">—</span>}</td>
                             <td className={'p-4 text-right text-sm font-bold '+(bulkField==='costPrice'&&isSel?'text-blue-400':'text-blue-400/60')}>₺{(p.costPrice||0).toFixed(2)}</td>
                             <td className={'p-4 text-right text-sm font-bold '+(bulkField==='grossPrice'&&isSel?'text-white':'text-zinc-500')}>₺{(p.grossPrice||0).toFixed(2)}</td>
@@ -2290,6 +2421,7 @@ export default function App(){
           <div className="bg-zinc-900 border border-zinc-700 rounded-[28px] w-full max-w-2xl shadow-2xl overflow-hidden animate-in zoom-in duration-300">
             <div className="p-6 border-b border-zinc-800 bg-zinc-950/50 flex justify-between items-center"><h3 className="text-lg font-black text-white flex items-center gap-2"><Pencil size={15} className="text-emerald-500"/> Ürün Düzenle</h3><button onClick={()=>setEditingProduct(null)} className="text-zinc-500 hover:text-white bg-zinc-800 p-2 rounded-xl"><X size={18}/></button></div>
             <form onSubmit={handleSaveEdit} className="p-6 grid grid-cols-2 gap-4">
+              {editingProduct.variantGroup&&<div className="col-span-2 bg-purple-500/10 border border-purple-500/30 rounded-2xl p-4 text-sm text-purple-200">Bu urun <strong>{editingProduct.variantGroup}</strong> varyant grubunda. Fiyat alanlarini kaydettiginizde gruptaki tum urunler ayni fiyata guncellenir.</div>}
               <div className="space-y-1.5 col-span-2"><label className="text-xs font-bold text-zinc-500 uppercase">Ürün Adı</label><input required value={editForm.name} onChange={e=>setEditForm((p:any)=>({...p,name:e.target.value}))} className="w-full bg-zinc-950 border border-zinc-700 p-3 rounded-xl text-white outline-none focus:border-emerald-500 text-sm"/></div>
               <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Barkod</label><input value={editForm.barcode} onChange={e=>setEditForm((p:any)=>({...p,barcode:e.target.value}))} className="w-full bg-zinc-950 border border-zinc-700 p-3 rounded-xl text-white outline-none text-sm"/></div>
               <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Kategori</label><select value={editForm.category} onChange={e=>setEditForm((p:any)=>({...p,category:e.target.value}))} className="w-full bg-zinc-950 border border-zinc-700 p-3 rounded-xl text-white outline-none text-sm"><option value="">— Seç —</option>{categories.map(c=><option key={c.id} value={c.name}>{c.name}</option>)}</select></div>
@@ -2414,39 +2546,73 @@ export default function App(){
               <button onClick={()=>setVariantProduct(null)} className="text-zinc-500 hover:text-white bg-zinc-800 p-2 rounded-xl"><X size={18}/></button>
             </div>
             <div className="flex-1 overflow-y-auto p-6 space-y-4">
-              <div className="flex items-center gap-3">
-                <div className="space-y-1.5 flex-1">
-                  <label className="text-xs font-bold text-zinc-500 uppercase">Varyant Grubu Adı</label>
-                  <input value={variantGroupName} onChange={e=>setVariantGroupName(e.target.value)} placeholder="ör. Renk, Beden, Model..." className="w-full bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-purple-500 text-sm"/>
+              <div className="bg-purple-500/10 border border-purple-500/30 rounded-xl p-4">
+                <p className="text-purple-300 text-xs font-bold">Bagli fiyat grubu</p>
+                <p className="text-zinc-400 text-xs mt-1">Ayni gruba aldiginiz urunlerde stok ve barkod ayri kalir. Grubu kaydettiginiz anda ana urunun fiyatlari secili urunlere uygulanir; sonrasinda birini guncellediginizde grup birlikte hareket eder.</p>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-zinc-500 uppercase">Varyant Grubu Adı</label>
+                <input value={variantGroupName} onChange={e=>setVariantGroupName(e.target.value)} placeholder="or. Yumos Oda Kokusu" className="w-full bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-purple-500 text-sm"/>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-zinc-500 uppercase">Gruba Urun Ekle</label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-3 text-zinc-500" size={14}/>
+                  <input value={variantSearch} onChange={e=>setVariantSearch(e.target.value)} placeholder="Urun adi, barkod veya grup ara..." className="w-full bg-zinc-950 border border-zinc-700 text-white pl-10 pr-4 py-3 rounded-xl outline-none focus:border-purple-500 text-sm"/>
                 </div>
               </div>
               <div className="bg-zinc-950 border border-zinc-800 rounded-2xl overflow-hidden">
-                <div className="grid grid-cols-12 gap-0 bg-zinc-900 text-zinc-500 text-xs font-bold uppercase p-3 border-b border-zinc-800">
-                  <div className="col-span-5">Varyant Adı</div>
-                  <div className="col-span-4">Barkod</div>
-                  <div className="col-span-2 text-center">Stok</div>
-                  <div className="col-span-1"></div>
+                <div className="p-3 border-b border-zinc-800 bg-zinc-900 flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase text-zinc-500">Secili urunler</span>
+                  <span className="text-xs font-black text-purple-400">{variantSelectedProducts.length} urun</span>
                 </div>
                 <div className="divide-y divide-zinc-800/50">
-                  {variantDraft.map((v,i)=>(
-                    <div key={i} className="grid grid-cols-12 gap-2 p-3 items-center">
-                      <div className="col-span-5"><input value={v.name} onChange={e=>{const n=[...variantDraft];n[i]={...n[i],name:e.target.value};setVariantDraft(n);}} placeholder="ör. Kırmızı / S / 42" className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded-xl outline-none focus:border-purple-500 text-sm font-bold"/></div>
-                      <div className="col-span-4"><input value={v.barcode} onChange={e=>{const n=[...variantDraft];n[i]={...n[i],barcode:e.target.value};setVariantDraft(n);}} placeholder="Barkod..." className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded-xl outline-none text-sm font-mono"/></div>
-                      <div className="col-span-2"><input type="number" min="0" value={v.stock} onChange={e=>{const n=[...variantDraft];n[i]={...n[i],stock:e.target.value};setVariantDraft(n);}} className="w-full bg-zinc-900 border border-zinc-700 text-white p-2.5 rounded-xl outline-none text-center font-black text-sm"/></div>
-                      <div className="col-span-1 flex justify-center"><button onClick={()=>setVariantDraft(variantDraft.filter((_,ii)=>ii!==i))} className="text-zinc-600 hover:text-red-500"><X size={14}/></button></div>
+                  {variantSelectedProducts.map((product:any)=>(
+                    <div key={product.id} className="flex items-center gap-3 p-3">
+                      <div className={'w-5 h-5 rounded-lg border-2 flex items-center justify-center shrink-0 '+(variantSelectedIds.has(product.id)?'bg-emerald-500 border-emerald-500':'border-zinc-600')}>
+                        <CheckCircle size={12} className={variantSelectedIds.has(product.id)?'text-zinc-950':'text-transparent'}/>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-bold text-white text-sm truncate">{product.name}</div>
+                        <div className="text-zinc-500 text-xs">{product.barcode||'Barkod yok'} · Stok: {product.stock||0} · ₺{(product.grossPrice||0).toFixed(2)}</div>
+                      </div>
+                      {product.id===variantProduct.id&&<span className="text-[10px] font-black bg-purple-500/20 text-purple-400 px-2 py-1 rounded-full">Ana urun</span>}
                     </div>
                   ))}
                 </div>
               </div>
-              <button onClick={()=>setVariantDraft([...variantDraft,{name:'',barcode:'',stock:''}])} className="flex items-center gap-2 text-purple-400 hover:text-purple-300 text-sm font-bold"><Plus size={14}/> Varyant Ekle</button>
+              <div className="bg-zinc-950 border border-zinc-800 rounded-2xl overflow-hidden">
+                <div className="p-3 border-b border-zinc-800 bg-zinc-900 flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase text-zinc-500">Tum urunler</span>
+                  <span className="text-xs text-zinc-600">{variantCandidates.length} sonuc</span>
+                </div>
+                <div className="max-h-72 overflow-y-auto divide-y divide-zinc-800/50">
+                  {variantCandidates.map((product:any)=>{
+                    const isSelected=variantSelectedIds.has(product.id);
+                    return(
+                      <button key={product.id} type="button" onClick={()=>toggleVariantSelection(product.id)} className={'w-full flex items-center gap-3 p-3 text-left transition-all '+(isSelected?'bg-emerald-500/5':'hover:bg-zinc-800/40')}>
+                        <div className={'w-5 h-5 rounded-lg border-2 flex items-center justify-center shrink-0 '+(isSelected?'bg-emerald-500 border-emerald-500':'border-zinc-600')}>
+                          {isSelected&&<CheckCircle size={12} className="text-zinc-950"/>}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-bold text-white text-sm truncate">{product.name}</div>
+                          <div className="text-zinc-500 text-xs">{product.barcode||'Barkod yok'} · Stok: {product.stock||0} · ₺{(product.grossPrice||0).toFixed(2)}</div>
+                        </div>
+                        {product.variantGroup&&<span className="text-[10px] font-black bg-purple-500/20 text-purple-400 px-2 py-1 rounded-full">{product.variantGroup}</span>}
+                      </button>
+                    );
+                  })}
+                  {variantCandidates.length===0&&<div className="p-6 text-center text-zinc-600 text-sm font-bold">Aramaya uygun ürün bulunamadı.</div>}
+                </div>
+              </div>
               <div className="bg-purple-500/10 border border-purple-500/30 rounded-xl p-4">
-                <p className="text-purple-300 text-xs font-bold">💡 İpucu:</p>
-                <p className="text-zinc-400 text-xs mt-1">Her varyant için ayrı barkod girebilirsiniz. Barkod okutunca direkt o varyant sepete eklenir. Stok varyant bazında takip edilir.</p>
+                <p className="text-purple-300 text-xs font-bold">Ipuclari</p>
+                <p className="text-zinc-400 text-xs mt-1">Ornek grup adi: Yumos Oda Kokusu. Lavanta, Leylak ve benzeri cesitleri ayri barkodla tutup fiyatlarini tek merkezden yonetebilirsiniz.</p>
               </div>
             </div>
             <div className="p-6 border-t border-zinc-800 shrink-0 flex gap-3">
               <button onClick={()=>setVariantProduct(null)} className="flex-1 bg-zinc-800 text-zinc-400 py-3.5 rounded-xl font-bold border border-zinc-700 text-sm">İptal</button>
-              <button onClick={handleSaveVariants} className="flex-1 bg-purple-600 hover:bg-purple-500 text-white py-3.5 rounded-xl font-black flex items-center justify-center gap-2 text-sm"><Save size={16}/> Kaydet</button>
+              <button onClick={handleSaveVariants} className="flex-1 bg-purple-600 hover:bg-purple-500 text-white py-3.5 rounded-xl font-black flex items-center justify-center gap-2 text-sm"><Save size={16}/> Grubu Kaydet</button>
             </div>
           </div>
         </div>
@@ -2700,13 +2866,6 @@ export default function App(){
     </>
   );
 }
-
-
-
-
-
-
-
 
 
 
