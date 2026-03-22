@@ -422,6 +422,7 @@ export default function App(){
   const [settingsSaved,setSettingsSaved]=useState(false);
 
   const fileInputRefProd=useRef<HTMLInputElement>(null);
+  const fileInputRefCust=useRef<HTMLInputElement>(null);
   const CAT_COLORS=['#10b981','#3b82f6','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316'];
 
   // ── Firebase listeners ────────────────────────────────────────────────
@@ -893,6 +894,87 @@ export default function App(){
   const dlCSV=(d:any[][],h:string[],f:string)=>{const c='data:text/csv;charset=utf-8,\uFEFF'+[h.join(','),...d.map(r=>r.join(','))].join('\n');const a=document.createElement('a');a.href=encodeURI(c);a.download=f;a.click();};
   const exportProducts=()=>dlCSV(products.map(p=>[(p.name||'').replace(/,/g,''),p.barcode||'',p.unit||'',p.category||'',p.costPrice||0,p.grossPrice||0,p.stock||0]),['Urun','Barkod','Birim','Kategori','Alis','Satis','Stok'],'urunler.csv');
   const exportCustomers=()=>dlCSV(customers.map(c=>[(c.name||'').replace(/,/g,''),c.taxNum||'',c.phone||'',c.category||'',c.balance||0]),['Musteri','Vergi','Tel','Kategori','Bakiye'],'musteriler.csv');
+  const normalizeImportKey=(v:any)=>String(v??'').toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\u0131/g,'i').replace(/\u0130/g,'i').replace(/[^a-z0-9]/g,'');
+  const parseImportNumber=(v:any)=>{if(typeof v==='number')return Number.isFinite(v)?v:0;const raw=String(v??'').trim();if(!raw)return 0;const n=Number.parseFloat(raw.replace(/\s+/g,'').replace(/\./g,'').replace(',','.'));return Number.isFinite(n)?n:0;};
+  const importCustomers=(e:React.ChangeEvent<HTMLInputElement>)=>{
+    const file=e.target.files?.[0];
+    if(!file)return;
+    const done=()=>{e.target.value='';};
+    const parseRows=async(rows:any[][])=>{
+      if(!rows.length){alert('Dosyada veri bulunamadı.');return;}
+      const headers=(rows[0]||[]).map((h:any)=>normalizeImportKey(h));
+      const findCol=(aliases:string[])=>{
+        for(const alias of aliases){
+          const idx=headers.indexOf(normalizeImportKey(alias));
+          if(idx>=0)return idx;
+        }
+        return -1;
+      };
+      let nameIdx=findCol(['musteri','musteriadi','musteriunvani','firma','firmaadi','unvan','adsoyad','isim']);
+      const taxIdx=findCol(['vergino','vergi','vergitckn','tc','tckn','vkn']);
+      const phoneIdx=findCol(['telefon','tel','gsm','cep','mobile','phone']);
+      const catIdx=findCol(['kategori','grup','sinif','segment']);
+      const noteIdx=findCol(['not','aciklama','notes','description']);
+      const balIdx=findCol(['bakiye','balance','borc','alacak']);
+      let startRow=1;
+      if(nameIdx<0){nameIdx=0;startRow=0;}
+      const taxCol=taxIdx>=0?taxIdx:(startRow===0?1:-1);
+      const phoneCol=phoneIdx>=0?phoneIdx:(startRow===0?2:-1);
+      const catCol=catIdx>=0?catIdx:(startRow===0?3:-1);
+      const balCol=balIdx>=0?balIdx:(startRow===0?4:-1);
+      const noteCol=noteIdx>=0?noteIdx:(startRow===0?5:-1);
+      let added=0,skipped=0;
+      for(let i=startRow;i<rows.length;i++){
+        const row=rows[i]||[];
+        const name=String(row[nameIdx]??'').trim();
+        if(!name){skipped++;continue;}
+        const taxNum=String(taxCol>=0?(row[taxCol]??''):'').trim()||'-';
+        const phone=String(phoneCol>=0?(row[phoneCol]??''):'').trim();
+        const category=String(catCol>=0?(row[catCol]??''):'').trim();
+        const note=String(noteCol>=0?(row[noteCol]??''):'').trim();
+        const balance=parseImportNumber(balCol>=0?(row[balCol]??''):0);
+        await addDoc(collection(db,'customers'),{name,phone,taxNum,category,note,balance});
+        added++;
+      }
+      await logAction('MUSTERI_ICE_AKTAR','Toplu müşteri içe aktarma: '+added+' eklendi');
+      alert('İçe aktarma tamamlandı! Eklenen: '+added+' | Atlanan: '+skipped);
+    };
+    const ext=file.name.toLowerCase();
+    if(ext.endsWith('.xlsx')||ext.endsWith('.xls')){
+      const reader=new FileReader();
+      reader.onload=async(ev)=>{
+        try{
+          const XLSX=await loadXLSX();
+          const data=ev.target?.result as ArrayBuffer;
+          const wb=XLSX.read(data,{type:'array'});
+          const ws=wb.Sheets[wb.SheetNames[0]];
+          const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:''}) as any[][];
+          await parseRows(rows);
+        }catch{
+          alert('Excel dosyası okunamadı.');
+        }finally{done();}
+      };
+      reader.onerror=()=>{alert('Dosya okunamadı.');done();};
+      reader.readAsArrayBuffer(file);
+      return;
+    }
+    const reader=new FileReader();
+    reader.onload=async(ev)=>{
+      try{
+        const text=String(ev.target?.result||'');
+        const lines=text.split(/\r?\n/).filter(Boolean);
+        const rows=lines.map(line=>{
+          const delim=(line.split(';').length>line.split(',').length)?';':',';
+          return line.split(delim).map(c=>c.trim().replace(/^"(.*)"$/,'$1'));
+        });
+        await parseRows(rows);
+      }catch{
+        alert('CSV dosyası okunamadı.');
+      }finally{done();}
+    };
+    reader.onerror=()=>{alert('Dosya okunamadı.');done();};
+    reader.readAsText(file);
+  };
   const importProducts=(e:React.ChangeEvent<HTMLInputElement>)=>{const file=e.target.files?.[0];if(!file)return;const r=new FileReader();r.onload=async(ev)=>{const rows=(ev.target?.result as string).split('\n').slice(1);for(const row of rows){const c=row.split(',');if(c.length>=4&&c[0].trim())await addDoc(collection(db,'products'),{name:c[0],barcode:c[1],unit:c[2],category:c[3]||'',costPrice:parseFloat(c[4])||0,grossPrice:parseFloat(c[5])||0,stock:parseInt(c[6])||0});}alert('İçeri aktarıldı!');};r.readAsText(file);};
 
   // ── Computed totals ───────────────────────────────────────────────────
@@ -2137,6 +2219,8 @@ export default function App(){
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-3xl font-black">Cari Hesaplar</h2>
               <div className="flex gap-3">
+                <input type="file" accept=".csv,.xlsx,.xls" ref={fileInputRefCust} style={{display:'none'}} onChange={importCustomers}/>
+                <button onClick={()=>fileInputRefCust.current?.click()} className="bg-zinc-800 text-zinc-300 px-4 py-2 rounded-xl font-bold flex items-center gap-2 border border-zinc-700 hover:bg-zinc-700 text-sm"><Upload size={14}/> İçeri</button>
                 <button onClick={exportCustomers} className="bg-zinc-800 text-zinc-300 px-4 py-2 rounded-xl font-bold flex items-center gap-2 border border-zinc-700 hover:bg-zinc-700 text-sm"><Download size={14}/> Dışarı</button>
                 <button onClick={()=>setActivePage('customers.categories')} className="bg-zinc-800 text-zinc-300 px-4 py-2 rounded-xl font-bold flex items-center gap-2 border border-zinc-700 hover:bg-zinc-700 text-sm"><FolderOpen size={14}/> Kategoriler</button>
                 <button onClick={()=>setShowCustomerForm(!showCustomerForm)} className="bg-emerald-500 text-zinc-950 px-5 py-2.5 rounded-2xl font-bold flex items-center gap-2 text-sm"><UserPlus size={15}/> Yeni Cari</button>
