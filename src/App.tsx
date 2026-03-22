@@ -341,6 +341,11 @@ export default function App(){
   const [pStock,setPStock]=useState('0');const [pCat,setPCat]=useState('');
   const [editingProduct,setEditingProduct]=useState<any>(null);
   const [editForm,setEditForm]=useState<any>({});
+  const [productSearch,setProductSearch]=useState('');
+  const [productCategoryFilter,setProductCategoryFilter]=useState('all');
+  const [productVariantFilter,setProductVariantFilter]=useState<'all'|'variant'|'single'>('all');
+  const [productStockFilter,setProductStockFilter]=useState<'all'|'in'|'low'|'out'>('all');
+  const [productSort,setProductSort]=useState<'name-asc'|'name-desc'|'price-asc'|'price-desc'|'stock-asc'|'stock-desc'>('name-asc');
   // ── Customers ─────────────────────────────────────────────────────────
   const [showCustomerForm,setShowCustomerForm]=useState(false);
   const [cName,setCName]=useState('');const [cPhone,setCPhone]=useState('');
@@ -819,6 +824,44 @@ export default function App(){
   const outOfStock=products.filter(p=>(p.stock||0)===0).length;
   const lowStock=products.filter(p=>(p.stock||0)>0&&(p.stock||0)<=lowStockLimit).length;
   const totalStockValue=products.reduce((a,b)=>a+((b.stock||0)*(b.costPrice||0)),0);
+
+  const filteredProducts=useMemo(()=>{
+    let list=[...products];
+    const q=productSearch.trim().toLowerCase();
+    if(q){
+      list=list.filter(p=>{
+        const haystack=[
+          String(p.name||''),
+          String(p.barcode||''),
+          String(p.category||''),
+          String(p.unit||''),
+          String(p.variantGroup||''),
+        ].join(' ').toLowerCase();
+        return haystack.includes(q);
+      });
+    }
+    if(productCategoryFilter!=='all')list=list.filter(p=>(p.category||'')===productCategoryFilter);
+    if(productVariantFilter==='variant')list=list.filter(p=>String(p.variantGroup||'').trim()!=='');
+    if(productVariantFilter==='single')list=list.filter(p=>String(p.variantGroup||'').trim()==='');
+    if(productStockFilter==='in')list=list.filter(p=>(p.stock||0)>0);
+    if(productStockFilter==='out')list=list.filter(p=>(p.stock||0)===0);
+    if(productStockFilter==='low')list=list.filter(p=>(p.stock||0)>0&&(p.stock||0)<=lowStockLimit);
+    const byName=(a:any,b:any)=>String(a.name||'').localeCompare(String(b.name||''),'tr');
+    switch(productSort){
+      case 'name-desc':
+        return list.sort((a,b)=>byName(b,a));
+      case 'price-asc':
+        return list.sort((a,b)=>(a.grossPrice||0)-(b.grossPrice||0)||byName(a,b));
+      case 'price-desc':
+        return list.sort((a,b)=>(b.grossPrice||0)-(a.grossPrice||0)||byName(a,b));
+      case 'stock-asc':
+        return list.sort((a,b)=>(a.stock||0)-(b.stock||0)||byName(a,b));
+      case 'stock-desc':
+        return list.sort((a,b)=>(b.stock||0)-(a.stock||0)||byName(a,b));
+      default:
+        return list.sort((a,b)=>byName(a,b));
+    }
+  },[products,productSearch,productCategoryFilter,productVariantFilter,productStockFilter,productSort,lowStockLimit]);
 
   const filteredStockProducts=useMemo(()=>{
     let list=[...products];
@@ -1596,13 +1639,50 @@ export default function App(){
                     <div className="flex items-end"><button type="submit" className="w-full bg-emerald-500 text-zinc-950 font-black py-3 rounded-xl text-sm">KAYDET</button></div>
                   </form>
                 )}
+                <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-4 mb-6 space-y-4">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="relative flex-1 min-w-[240px]">
+                      <Search className="absolute left-3 top-3 text-zinc-500" size={15}/>
+                      <input value={productSearch} onChange={e=>setProductSearch(e.target.value)} placeholder="Urun adi, barkod, kategori veya varyant ara..." className="w-full bg-zinc-950 border border-zinc-700 text-white pl-10 pr-4 py-3 rounded-xl outline-none focus:border-emerald-500 text-sm"/>
+                    </div>
+                    <select value={productCategoryFilter} onChange={e=>setProductCategoryFilter(e.target.value)} className="bg-zinc-950 border border-zinc-700 text-zinc-300 px-3 py-3 rounded-xl outline-none text-sm min-w-[180px]">
+                      <option value="all">Tum kategoriler</option>
+                      {categories.map(c=><option key={c.id} value={c.name}>{c.name}</option>)}
+                    </select>
+                    <select value={productVariantFilter} onChange={e=>setProductVariantFilter(e.target.value as 'all'|'variant'|'single')} className="bg-zinc-950 border border-zinc-700 text-zinc-300 px-3 py-3 rounded-xl outline-none text-sm min-w-[160px]">
+                      <option value="all">Tum urunler</option>
+                      <option value="variant">Varyantli</option>
+                      <option value="single">Tekil</option>
+                    </select>
+                    <select value={productStockFilter} onChange={e=>setProductStockFilter(e.target.value as 'all'|'in'|'low'|'out')} className="bg-zinc-950 border border-zinc-700 text-zinc-300 px-3 py-3 rounded-xl outline-none text-sm min-w-[170px]">
+                      <option value="all">Tum stoklar</option>
+                      <option value="in">Stokta olan</option>
+                      <option value="low">Kritik stok</option>
+                      <option value="out">Tukenen</option>
+                    </select>
+                    <select value={productSort} onChange={e=>setProductSort(e.target.value as 'name-asc'|'name-desc'|'price-asc'|'price-desc'|'stock-asc'|'stock-desc')} className="bg-zinc-950 border border-zinc-700 text-zinc-300 px-3 py-3 rounded-xl outline-none text-sm min-w-[180px]">
+                      <option value="name-asc">Ada gore A-Z</option>
+                      <option value="name-desc">Ada gore Z-A</option>
+                      <option value="price-asc">Fiyat artan</option>
+                      <option value="price-desc">Fiyat azalan</option>
+                      <option value="stock-asc">Stok artan</option>
+                      <option value="stock-desc">Stok azalan</option>
+                    </select>
+                    <button onClick={()=>{setProductSearch('');setProductCategoryFilter('all');setProductVariantFilter('all');setProductStockFilter('all');setProductSort('name-asc');}} className="bg-zinc-800 text-zinc-300 px-4 py-3 rounded-xl font-bold border border-zinc-700 hover:bg-zinc-700 text-sm flex items-center gap-2"><X size={14}/> Temizle</button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3 text-xs font-bold">
+                    <span className="bg-emerald-500/15 text-emerald-400 px-3 py-1.5 rounded-full">{filteredProducts.length} / {products.length} urun</span>
+                    <span className="bg-zinc-950 text-zinc-400 px-3 py-1.5 rounded-full">Kritik stok: {filteredProducts.filter(p=>(p.stock||0)>0&&(p.stock||0)<=lowStockLimit).length}</span>
+                    <span className="bg-zinc-950 text-zinc-400 px-3 py-1.5 rounded-full">Varyantli: {filteredProducts.filter(p=>String(p.variantGroup||'').trim()!=='').length}</span>
+                  </div>
+                </div>
                 <div className="bg-zinc-900 rounded-3xl overflow-hidden border border-zinc-800">
                   <table className="w-full text-left">
                     <thead className="bg-zinc-950 text-zinc-500 text-xs font-bold uppercase tracking-widest">
                       <tr><th className="p-4">Ürün</th><th className="p-4">Barkod</th><th className="p-4">Kategori</th><th className="p-4">Birim</th><th className="p-4 text-right">Alış</th><th className="p-4 text-right">Satış</th><th className="p-4 text-center">Stok</th><th className="p-4 text-center">İşlem</th></tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-800/50">
-                      {products.map(p=>{
+                      {filteredProducts.map(p=>{
                         const sc=stockColor(p.stock||0);
                         return(
                           <tr key={p.id} className="hover:bg-zinc-800/30 transition-colors">
@@ -1627,6 +1707,11 @@ export default function App(){
                           </tr>
                         );
                       })}
+                      {filteredProducts.length===0&&(
+                        <tr>
+                          <td colSpan={8} className="p-8 text-center text-zinc-600 font-bold">Aradiginiz kosullara uygun urun bulunamadi.</td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -2866,10 +2951,6 @@ export default function App(){
     </>
   );
 }
-
-
-
-
 
 
 
