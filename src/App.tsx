@@ -776,6 +776,17 @@ export default function App(){
     if(selectedCustomer?.id===editingCustomer.id)setSelectedCustomer((prev:any)=>({...prev,...editCustForm}));
     setEditingCustomer(null);
   };
+  const handleDeleteCustomer=async(customer:any)=>{
+    if(!customer?.id)return;
+    const name=String(customer.name||'Bu musteri');
+    const bal=Number(customer.balance||0);
+    const balText=bal!==0?('\n\nGuncel bakiye: '+(bal>0?'+':'-')+'TL'+Math.abs(bal).toFixed(2)):'';
+    const ok=window.confirm(name+' kaydini silmek istediginize emin misiniz? Bu islem geri alinamaz.'+balText);
+    if(!ok)return;
+    if(selectedCustomer?.id===customer.id)setSelectedCustomer(null);
+    await deleteDoc(doc(db,'customers',customer.id));
+    await logAction('MUSTERI_SIL',name+' silindi');
+  };
   const handleTahsilat=async(customer:any)=>{
     const t=window.prompt((customer.name)+' Tahsilat Tutarı (₺):');
     if(t&&!isNaN(Number(t))){
@@ -2161,7 +2172,7 @@ export default function App(){
                   <div className="flex gap-2 justify-end mt-2">
                     <button onClick={ev=>{ev.stopPropagation();openEditCustomer(c);}} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-400 px-3 py-1.5 rounded-lg text-xs font-bold border border-zinc-700 flex items-center gap-1"><Pencil size={11}/> Düzenle</button>
                     <button onClick={ev=>{ev.stopPropagation();handleTahsilat(c);}} className="bg-zinc-800 hover:bg-emerald-500 hover:text-zinc-950 text-emerald-500 px-3 py-1.5 rounded-lg text-xs font-bold border border-zinc-700 flex items-center gap-1"><Wallet size={11}/> Tahsilat</button>
-                    <button onClick={ev=>{ev.stopPropagation();deleteDoc(doc(db,'customers',c.id));}} className="bg-zinc-800 hover:bg-red-500 text-zinc-500 px-2.5 py-1.5 rounded-lg border border-zinc-700"><Trash2 size={11}/></button>
+                    <button onClick={ev=>{ev.stopPropagation();handleDeleteCustomer(c);}} className="bg-zinc-800 hover:bg-red-500 text-zinc-500 px-2.5 py-1.5 rounded-lg border border-zinc-700"><Trash2 size={11}/></button>
                   </div>
                 </div>
               ))}
@@ -3024,7 +3035,7 @@ export default function App(){
               <div className="p-4 border-t border-zinc-800 bg-zinc-950/30 flex gap-3 shrink-0">
                 <button onClick={()=>handleTahsilat(selectedCustomer)} className="flex-1 bg-emerald-500 text-zinc-950 font-black py-3.5 rounded-2xl flex items-center justify-center gap-2 hover:bg-emerald-400 text-sm"><Wallet size={15}/> TAHSİLAT AL</button>
                 <button onClick={()=>{openEditCustomer(selectedCustomer);setSelectedCustomer(null);}} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-5 py-3.5 rounded-2xl font-bold border border-zinc-700 flex items-center gap-2 text-sm"><Pencil size={13}/> Düzenle</button>
-                <button onClick={()=>{setSelectedCustomer(null);deleteDoc(doc(db,'customers',selectedCustomer.id));}} className="bg-zinc-800 hover:bg-red-500 text-zinc-400 hover:text-white px-5 py-3.5 rounded-2xl font-bold border border-zinc-700 flex items-center gap-2 text-sm"><Trash2 size={13}/> Sil</button>
+                <button onClick={()=>handleDeleteCustomer(selectedCustomer)} className="bg-zinc-800 hover:bg-red-500 text-zinc-400 hover:text-white px-5 py-3.5 rounded-2xl font-bold border border-zinc-700 flex items-center gap-2 text-sm"><Trash2 size={13}/> Sil</button>
               </div>
             )}
           </div>
