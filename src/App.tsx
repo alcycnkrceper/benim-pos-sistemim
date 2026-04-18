@@ -64,6 +64,14 @@ interface ReceiptSettings {
   taxNo:string; website:string; footerLine1:string; footerLine2:string;
   showTaxNo:boolean; showAddress:boolean; showPhone:boolean; showWebsite:boolean; showItemTax:boolean;
   borderStyle:BorderStyle; fontSize:FontSize; paperSize:PaperSize;
+  companyNameFontSize:number;
+  companyNameSingleLine:boolean;
+  companyNameAlign:'left'|'center'|'right';
+  subtitleFontSize:number;
+  subtitleAlign:'left'|'center'|'right';
+  logoBase64:string|null;
+  logoSize:number;
+  logoAlign:'left'|'center'|'right';
 }
 const DEFAULT_SETTINGS: ReceiptSettings = {
   companyName:'MERKEZ ŞUBE', companySubtitle:'TOPTAN TİCARET VE SATIŞ FİŞİ',
@@ -71,6 +79,14 @@ const DEFAULT_SETTINGS: ReceiptSettings = {
   footerLine1:'BİZİ TERCİH ETTİĞİNİZ İÇİN TEŞEKKÜR EDERİZ.', footerLine2:'YİNE BEKLERİZ!',
   showTaxNo:true, showAddress:false, showPhone:false, showWebsite:false, showItemTax:false,
   borderStyle:'thick', fontSize:'normal', paperSize:'a4',
+  companyNameFontSize:36,
+  companyNameSingleLine:false,
+  companyNameAlign:'left',
+  subtitleFontSize:11,
+  subtitleAlign:'left',
+  logoBase64:null,
+  logoSize:80,
+  logoAlign:'center',
 };
 const PAPER_WIDTHS:Record<PaperSize,number> = {'58mm':220,'80mm':310,'a5':520,'a4':680};
 const PAPER_LABELS:Record<PaperSize,string> = {'58mm':'Termal 58mm','80mm':'Termal 80mm','a5':'A5','a4':'A4'};
@@ -146,12 +162,19 @@ function ReceiptTemplate({sale,settings,preview=false}:{sale:any;settings:Receip
   const bdr=settings.borderStyle==='thick'?'4px solid black':settings.borderStyle==='thin'?'1px solid #555':'0px solid transparent';
   const hBdr=settings.borderStyle==='none'?'2px solid #e5e7eb':bdr;
   const small=settings.paperSize==='58mm';
+  const cnSize=settings.companyNameFontSize??36;
+  const stSize=settings.subtitleFontSize??11;
   return (
     <div style={{maxWidth:preview?'100%':pw+'px',margin:'0 auto',padding:preview?'16px':'28px',background:'white',color:'black',fontFamily:'Arial,sans-serif',fontSize:(fs)+'rem',border:preview?'none':bdr,boxSizing:'border-box'}}>
+      {settings.logoBase64&&(
+        <div style={{textAlign:settings.logoAlign??'center',marginBottom:10}}>
+          <img src={settings.logoBase64} alt="logo" style={{width:(settings.logoSize??80)+'px',height:'auto',display:'inline-block'}}/>
+        </div>
+      )}
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',paddingBottom:'14px',marginBottom:'14px',borderBottom:hBdr}}>
-        <div>
-          <div style={{fontSize:(fs*(small?1.4:2.2)).toFixed(2)+'rem',fontWeight:900,textTransform:'uppercase',letterSpacing:'-0.02em',lineHeight:1}}>{settings.companyName}</div>
-          <div style={{fontSize:(fs*0.72).toFixed(2)+'rem',fontWeight:700,color:'#666',marginTop:3}}>{settings.companySubtitle}</div>
+        <div style={{flex:1}}>
+          <div style={{fontSize:cnSize+'px',fontWeight:900,textTransform:'uppercase',letterSpacing:'-0.02em',lineHeight:1.1,textAlign:settings.companyNameAlign??'left',whiteSpace:settings.companyNameSingleLine?'nowrap':'normal',overflow:settings.companyNameSingleLine?'hidden':'visible',textOverflow:settings.companyNameSingleLine?'ellipsis':'clip'}}>{settings.companyName}</div>
+          <div style={{fontSize:stSize+'px',fontWeight:700,color:'#666',marginTop:3,textAlign:settings.subtitleAlign??'left'}}>{settings.companySubtitle}</div>
           {settings.showAddress&&settings.address&&<div style={{fontSize:(fs*0.68).toFixed(2)+'rem',color:'#555',marginTop:2}}>📍 {settings.address}</div>}
           {settings.showPhone&&settings.phone&&<div style={{fontSize:(fs*0.68).toFixed(2)+'rem',color:'#555'}}>📞 {settings.phone}</div>}
           {sale.isMerged&&<div style={{fontSize:(fs*0.62).toFixed(2)+'rem',fontWeight:700,color:'#666',marginTop:5,background:'#f3f4f6',padding:'2px 6px',borderRadius:4,display:'inline-block'}}>BİRLEŞİK — {sale.mergedCount} satış</div>}
@@ -2664,8 +2687,67 @@ export default function App(){
               <div className="p-4 border-b border-zinc-800 flex items-center justify-between shrink-0"><div><h2 className="text-base font-black flex items-center gap-2"><Palette size={15} className="text-emerald-500"/> Fiş Tasarımı</h2><p className="text-zinc-500 text-xs">Canlı önizleme sağda</p></div><button onClick={()=>setDraftSettings({...DEFAULT_SETTINGS})} className="text-zinc-500 hover:text-white bg-zinc-800 p-1.5 rounded-xl border border-zinc-700"><RotateCcw size={12}/></button></div>
               <div className="flex-1 overflow-y-auto p-4 space-y-4">
                 <div className="space-y-2"><h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">📏 Kağıt</h3><div className="grid grid-cols-2 gap-2">{(Object.keys(PAPER_LABELS) as PaperSize[]).map(ps=><button key={ps} onClick={()=>upDraft('paperSize',ps)} className={'py-2.5 px-3 rounded-xl text-xs font-bold border transition-all text-left '+(draftSettings.paperSize===ps?'bg-emerald-500 text-zinc-950 border-emerald-500':'bg-zinc-800 text-zinc-400 border-zinc-700')}><div className="font-black">{PAPER_LABELS[ps]}</div></button>)}</div></div>
-                <div className="space-y-2.5"><h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-1.5"><Building2 size={10}/> Firma</h3><Field label="Şube Adı" value={draftSettings.companyName} onChange={v=>upDraft('companyName',v)}/><Field label="Alt Başlık" value={draftSettings.companySubtitle} onChange={v=>upDraft('companySubtitle',v)}/><Field label="Adres" icon={<MapPin size={9}/>} value={draftSettings.address} onChange={v=>upDraft('address',v)} placeholder="Cad. No..."/><Field label="Telefon" icon={<Phone size={9}/>} value={draftSettings.phone} onChange={v=>upDraft('phone',v)}/><Field label="Vergi No" icon={<Hash size={9}/>} value={draftSettings.taxNo} onChange={v=>upDraft('taxNo',v)}/></div>
-                <div className="space-y-2.5"><h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-1.5"><AlignLeft size={10}/> Alt Yazı</h3><Field label="1. Satır" value={draftSettings.footerLine1} onChange={v=>upDraft('footerLine1',v)}/><Field label="2. Satır" value={draftSettings.footerLine2} onChange={v=>upDraft('footerLine2',v)}/></div>
+<div className="space-y-2.5">
+  <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-1.5"><Building2 size={10}/> Logo</h3>
+  <div>
+    <input type="file" id="logoInput" accept="image/*" style={{display:'none'}} onChange={(e)=>{
+      const file=e.target.files?.[0];
+      if(!file)return;
+      const reader=new FileReader();
+      reader.onload=(ev)=>upDraft('logoBase64',ev.target?.result as string);
+      reader.readAsDataURL(file);
+      e.target.value='';
+    }}/>
+    <button type="button" onClick={()=>document.getElementById('logoInput')?.click()} className="w-full bg-zinc-800 hover:bg-zinc-700 border border-dashed border-zinc-600 text-zinc-400 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
+      🖼 {draftSettings.logoBase64?'Logoyu Değiştir':'Logo Yükle (PNG/JPG)'}
+    </button>
+    {draftSettings.logoBase64&&(
+      <div className="mt-2 space-y-2">
+        <div className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 rounded-xl p-2.5">
+          <img src={draftSettings.logoBase64} alt="logo" style={{width:40,height:'auto',maxHeight:40,objectFit:'contain'}}/>
+          <button type="button" onClick={()=>upDraft('logoBase64',null)} className="ml-auto text-red-400 text-xs font-bold hover:text-red-300">Kaldır</button>
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs font-bold text-zinc-500 uppercase">Logo Genişliği: {draftSettings.logoSize??80}px</label>
+          <input type="range" min={20} max={200} step={5} value={draftSettings.logoSize??80} onChange={e=>upDraft('logoSize',parseInt(e.target.value))} className="w-full accent-emerald-500"/>
+        </div>
+        <div><label className="text-xs font-bold text-zinc-500 uppercase block mb-1.5">Logo Hizalama</label><div className="grid grid-cols-3 gap-1">{(['left','center','right'] as const).map(a=><button key={a} type="button" onClick={()=>upDraft('logoAlign',a)} className={'py-1.5 rounded-lg text-xs font-bold border transition-all '+(draftSettings.logoAlign===a?'bg-emerald-500 text-zinc-950 border-emerald-500':'bg-zinc-800 text-zinc-400 border-zinc-700')}>{a==='left'?'Sol':a==='center'?'Orta':'Sağ'}</button>)}</div></div>
+      </div>
+    )}
+  </div>
+</div>
+<div className="space-y-2.5">
+  <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-1.5"><Building2 size={10}/> Firma</h3>
+  <Field label="Şube Adı" value={draftSettings.companyName} onChange={v=>upDraft('companyName',v)}/>
+  <div className="space-y-1.5">
+    <label className="text-xs font-bold text-zinc-500 uppercase">Firma Adı Boyutu: {draftSettings.companyNameFontSize??36}px</label>
+    <div className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2">
+      <button type="button" onClick={()=>upDraft('companyNameFontSize',Math.max(10,(draftSettings.companyNameFontSize??36)-2))} className="text-zinc-400 hover:text-white font-black text-lg w-6">−</button>
+      <span className="flex-1 text-center font-black text-white">{draftSettings.companyNameFontSize??36}px</span>
+      <button type="button" onClick={()=>upDraft('companyNameFontSize',Math.min(72,(draftSettings.companyNameFontSize??36)+2))} className="text-zinc-400 hover:text-white font-black text-lg w-6">+</button>
+    </div>
+  </div>
+  <div><label className="text-xs font-bold text-zinc-500 uppercase block mb-1.5">Firma Adı Hizalama</label><div className="grid grid-cols-3 gap-1">{(['left','center','right'] as const).map(a=><button key={a} type="button" onClick={()=>upDraft('companyNameAlign',a)} className={'py-1.5 rounded-lg text-xs font-bold border transition-all '+(draftSettings.companyNameAlign===a?'bg-emerald-500 text-zinc-950 border-emerald-500':'bg-zinc-800 text-zinc-400 border-zinc-700')}>{a==='left'?'Sol':a==='center'?'Orta':'Sağ'}</button>)}</div></div>
+  <div className="flex items-center justify-between py-2 border-b border-zinc-800/40">
+    <span className="text-zinc-300 text-xs font-medium">Tek satıra sığdır (uzun isimler)</span>
+    <button type="button" onClick={()=>upDraft('companyNameSingleLine',!draftSettings.companyNameSingleLine)} className={'w-10 h-5 rounded-full relative transition-all '+(draftSettings.companyNameSingleLine?'bg-emerald-500':'bg-zinc-700')}>
+      <span className={'absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all '+(draftSettings.companyNameSingleLine?'left-5':'left-0.5')}/>
+    </button>
+  </div>
+  <Field label="Alt Başlık" value={draftSettings.companySubtitle} onChange={v=>upDraft('companySubtitle',v)}/>
+  <div className="space-y-1.5">
+    <label className="text-xs font-bold text-zinc-500 uppercase">Alt Başlık Boyutu: {draftSettings.subtitleFontSize??11}px</label>
+    <div className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2">
+      <button type="button" onClick={()=>upDraft('subtitleFontSize',Math.max(7,(draftSettings.subtitleFontSize??11)-1))} className="text-zinc-400 hover:text-white font-black text-lg w-6">−</button>
+      <span className="flex-1 text-center font-black text-white">{draftSettings.subtitleFontSize??11}px</span>
+      <button type="button" onClick={()=>upDraft('subtitleFontSize',Math.min(24,(draftSettings.subtitleFontSize??11)+1))} className="text-zinc-400 hover:text-white font-black text-lg w-6">+</button>
+    </div>
+  </div>
+  <div><label className="text-xs font-bold text-zinc-500 uppercase block mb-1.5">Alt Başlık Hizalama</label><div className="grid grid-cols-3 gap-1">{(['left','center','right'] as const).map(a=><button key={a} type="button" onClick={()=>upDraft('subtitleAlign',a)} className={'py-1.5 rounded-lg text-xs font-bold border transition-all '+(draftSettings.subtitleAlign===a?'bg-emerald-500 text-zinc-950 border-emerald-500':'bg-zinc-800 text-zinc-400 border-zinc-700')}>{a==='left'?'Sol':a==='center'?'Orta':'Sağ'}</button>)}</div></div>
+  <Field label="Adres" icon={<MapPin size={9}/>} value={draftSettings.address} onChange={v=>upDraft('address',v)} placeholder="Cad. No..."/>
+  <Field label="Telefon" icon={<Phone size={9}/>} value={draftSettings.phone} onChange={v=>upDraft('phone',v)}/>
+  <Field label="Vergi No" icon={<Hash size={9}/>} value={draftSettings.taxNo} onChange={v=>upDraft('taxNo',v)}/>
+</div>                <div className="space-y-2.5"><h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-1.5"><AlignLeft size={10}/> Alt Yazı</h3><Field label="1. Satır" value={draftSettings.footerLine1} onChange={v=>upDraft('footerLine1',v)}/><Field label="2. Satır" value={draftSettings.footerLine2} onChange={v=>upDraft('footerLine2',v)}/></div>
                 <div><h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest mb-2 flex items-center gap-1.5"><Eye size={10}/> Göster/Gizle</h3><Toggle label="Müşteri Vergi No" value={draftSettings.showTaxNo} onChange={v=>upDraft('showTaxNo',v)}/><Toggle label="Firma Adresi" value={draftSettings.showAddress} onChange={v=>upDraft('showAddress',v)}/><Toggle label="Firma Telefonu" value={draftSettings.showPhone} onChange={v=>upDraft('showPhone',v)}/><Toggle label="Ürün KDV" value={draftSettings.showItemTax} onChange={v=>upDraft('showItemTax',v)}/></div>
                 <div className="space-y-3"><h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Görünüm</h3><div><label className="text-xs font-bold text-zinc-500 uppercase block mb-1.5">Kenarlık</label><div className="grid grid-cols-3 gap-2">{(['thick','thin','none'] as const).map(b=><button key={b} onClick={()=>upDraft('borderStyle',b)} className={'py-2 rounded-xl text-xs font-bold border transition-all '+(draftSettings.borderStyle===b?'bg-emerald-500 text-zinc-950 border-emerald-500':'bg-zinc-800 text-zinc-400 border-zinc-700')}>{b==='thick'?'Kalın':b==='thin'?'İnce':'Yok'}</button>)}</div></div><div><label className="text-xs font-bold text-zinc-500 uppercase block mb-1.5">Yazı</label><div className="grid grid-cols-3 gap-2">{(['small','normal','large'] as const).map(f=><button key={f} onClick={()=>upDraft('fontSize',f)} className={'py-2 rounded-xl text-xs font-bold border transition-all '+(draftSettings.fontSize===f?'bg-emerald-500 text-zinc-950 border-emerald-500':'bg-zinc-800 text-zinc-400 border-zinc-700')}>{f==='small'?'Küçük':f==='normal'?'Normal':'Büyük'}</button>)}</div></div></div>
               </div>
