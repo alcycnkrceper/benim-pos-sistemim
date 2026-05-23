@@ -225,7 +225,6 @@ return (
 <div style={{border:'1px solid #ccc',borderRadius:2,padding:`${Math.max(2,rP*2)}px`,marginBottom:sG+'px',background:'#fafafa'}}>
 <div style={{fontWeight:900,fontSize:(fs*12)+'px',textTransform:'uppercase'}}>{sale.customerName}</div>
 {settings.showTaxNo&&<div style={{color:'#666',fontSize:(fs*10)+'px'}}>VKN: {sale.customerTax||'-'}</div>}
-<div style={{color:'#555',fontSize:(fs*10)+'px'}}>ÖDEME: {sale.method}</div>
 </div>
 ):(
 <div style={{marginBottom:sG+'px',fontSize:(fs*11)+'px',fontWeight:700}}>
