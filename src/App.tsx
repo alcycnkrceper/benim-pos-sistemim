@@ -190,7 +190,7 @@ function ReceiptTemplate({sale,settings,preview=false}:{sale:any;settings:Receip
       <div style={{background:'#f9fafb',border:'2px solid '+(settings.borderStyle==='none'?'#e5e7eb':'#000'),borderRadius:6,padding:(small?8:14)+'px',marginBottom:14}}>
         <div style={{fontSize:(fs*(small?0.9:1.1)).toFixed(2)+'rem',fontWeight:900,textTransform:'uppercase'}}>SAYIN: {sale.customerName}</div>
         {settings.showTaxNo&&<div style={{fontWeight:700,color:'#555',marginTop:3,fontSize:(fs*0.78).toFixed(2)+'rem'}}>VERGİ/TC: {sale.customerTax||'-'}</div>}
-        <div style={{fontWeight:700,color:'#555',marginTop:2,fontSize:(fs*0.78).toFixed(2)+'rem'}}>ÖDEME: {sale.method}</div>
+
       </div>
       <table style={{width:'100%',borderCollapse:'collapse',marginBottom:20}}>
         <thead>
