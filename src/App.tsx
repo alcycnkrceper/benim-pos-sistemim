@@ -444,7 +444,7 @@ export default function App(){
   const [showAddForm,setShowAddForm]=useState(false);
   const [pName,setPName]=useState('');const [pBarcode,setPBarcode]=useState('');
   const [pUnit,setPUnit]=useState('Adet');const [pCost,setPCost]=useState('');
-  const [pNet,setPNet]=useState('');const [pTax,setPTax]=useState('20');
+  const [pNet,setPNet]=useState('');const [pGross,setPGross]=useState('');const [pTax,setPTax]=useState('20');
   const [pStock,setPStock]=useState('0');const [pCat,setPCat]=useState('');
   const [editingProduct,setEditingProduct]=useState<any>(null);
   const [editForm,setEditForm]=useState<any>({});
@@ -865,15 +865,24 @@ export default function App(){
   // ── Products CRUD ─────────────────────────────────────────────────────
   const handleAddProduct=async(e:React.FormEvent)=>{
     e.preventDefault();
-    await addDoc(collection(db,'products'),{name:pName,barcode:pBarcode,unit:pUnit,costPrice:parseFloat(pCost)||0,netPrice:parseFloat(pNet),taxRate:parseInt(pTax),grossPrice:parseFloat(calcGross(pNet,pTax)),stock:parseInt(pStock)||0,category:pCat||''});
+    const tax=parseInt(pTax)||0;
+    const hasGross=pGross.trim()!==''&&!isNaN(parseFloat(pGross));
+    const hasNet=pNet.trim()!==''&&!isNaN(parseFloat(pNet));
+    if(!hasGross&&!hasNet)return alert('Lütfen Net veya Brüt satış fiyatından en az birini girin.');
+    const grossVal=hasGross?parseFloat(pGross):parseFloat((parseFloat(pNet)*(1+tax/100)).toFixed(2));
+    const netVal=hasNet?parseFloat(pNet):parseFloat((grossVal/(1+tax/100)).toFixed(2));
+    await addDoc(collection(db,'products'),{name:pName,barcode:pBarcode,unit:pUnit,costPrice:parseFloat(pCost)||0,netPrice:netVal,taxRate:tax,grossPrice:grossVal,stock:parseInt(pStock)||0,category:pCat||''});
     await logAction('ÜRÜN_EKLE',(pName)+' eklendi');
-    setPName('');setPBarcode('');setPCost('');setPNet('');setPStock('0');setPCat('');setShowAddForm(false);
+    setPName('');setPBarcode('');setPCost('');setPNet('');setPGross('');setPStock('0');setPCat('');setShowAddForm(false);
   };
   const openEditProduct=(p:any)=>{setEditingProduct(p);setEditForm({name:p.name||'',barcode:p.barcode||'',unit:p.unit||'Adet',category:p.category||'',costPrice:String(p.costPrice||''),netPrice:String(p.netPrice||''),taxRate:String(p.taxRate??20),grossPrice:String(p.grossPrice||''),stock:String(p.stock||0)});};
   const handleSaveEdit=async(e:React.FormEvent)=>{
     e.preventDefault();if(!editingProduct)return;
-    const net=parseFloat(editForm.netPrice)||0,tax=parseInt(editForm.taxRate)||0;
-    const gross=editForm.grossPrice?parseFloat(editForm.grossPrice):parseFloat((net*(1+tax/100)).toFixed(2));
+    const tax=parseInt(editForm.taxRate)||0;
+    const hasGross=String(editForm.grossPrice??'').trim()!==''&&!isNaN(parseFloat(editForm.grossPrice));
+    const hasNet=String(editForm.netPrice??'').trim()!==''&&!isNaN(parseFloat(editForm.netPrice));
+    const gross=hasGross?parseFloat(editForm.grossPrice):(hasNet?parseFloat((parseFloat(editForm.netPrice)*(1+tax/100)).toFixed(2)):0);
+    const net=hasNet?parseFloat(editForm.netPrice):(hasGross?parseFloat((gross/(1+tax/100)).toFixed(2)):0);
     const ownPatch={name:editForm.name,barcode:editForm.barcode,unit:editForm.unit,category:editForm.category,stock:parseInt(editForm.stock)||0};
     const pricePatch={costPrice:parseFloat(editForm.costPrice)||0,netPrice:net,taxRate:tax,grossPrice:gross};
     const members=getVariantPricingTargets(editingProduct);
@@ -2057,16 +2066,69 @@ export default function App(){
                   </div>
                 </div>
                 {showAddForm&&(
-                  <form onSubmit={handleAddProduct} className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl mb-6 grid grid-cols-2 lg:grid-cols-4 gap-4 animate-in slide-in-from-top duration-300">
+                  <form onSubmit={handleAddProduct} className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl mb-6 grid grid-cols-2 lg:grid-cols-5 gap-4 animate-in slide-in-from-top duration-300">
                     <div className="space-y-1.5 col-span-2"><label className="text-xs font-bold text-zinc-500 uppercase">Ürün İsmi</label><input required value={pName} onChange={e=>setPName(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 p-3 rounded-xl outline-none focus:border-emerald-500 text-sm" placeholder="Dove Sabun 100gr"/></div>
                     <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Barkod</label><input value={pBarcode} onChange={e=>setPBarcode(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 p-3 rounded-xl outline-none text-sm" placeholder="Okutun..."/></div>
                     <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Kategori</label><select value={pCat} onChange={e=>setPCat(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 p-3 rounded-xl outline-none text-sm"><option value="">— Seç —</option>{categories.map(c=><option key={c.id} value={c.name}>{c.name}</option>)}</select></div>
                     <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Birim</label><select value={pUnit} onChange={e=>setPUnit(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 p-3 rounded-xl outline-none text-sm"><option>Adet</option><option>Koli</option><option>Paket</option></select></div>
                     <div className="space-y-1.5"><label className="text-xs font-bold text-blue-400 uppercase">Alış Fiyatı</label><input type="number" step="0.01" value={pCost} onChange={e=>setPCost(e.target.value)} className="w-full bg-blue-950/20 border border-blue-900 p-3 rounded-xl outline-none text-blue-300 text-sm" placeholder="0.00"/></div>
-                    <div className="space-y-1.5"><label className="text-xs font-bold text-emerald-500 uppercase">NET Satış</label><input required type="number" step="0.01" value={pNet} onChange={e=>setPNet(e.target.value)} className="w-full bg-zinc-950 border border-emerald-900 p-3 rounded-xl outline-none focus:border-emerald-500 text-sm" placeholder="0.00"/></div>
-                    <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">KDV %</label><select value={pTax} onChange={e=>setPTax(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 p-3 rounded-xl outline-none text-sm"><option value="0">0</option><option value="1">1</option><option value="10">10</option><option value="20">20</option></select></div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-emerald-400 uppercase">BRÜT Satış (KDV Dahil)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={pGross}
+                        onChange={e=>{
+                          const v=e.target.value;
+                          setPGross(v);
+                          const g=parseFloat(v);
+                          const t=parseInt(pTax)||0;
+                          if(!v||isNaN(g))setPNet('');
+                          else setPNet((g/(1+t/100)).toFixed(2));
+                        }}
+                        className="w-full bg-emerald-950/20 border border-emerald-500/60 p-3 rounded-xl outline-none focus:border-emerald-400 text-emerald-300 font-black text-sm"
+                        placeholder="0.00"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-zinc-400 uppercase">NET Satış (KDV Hariç)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={pNet}
+                        onChange={e=>{
+                          const v=e.target.value;
+                          setPNet(v);
+                          const n=parseFloat(v);
+                          const t=parseInt(pTax)||0;
+                          if(!v||isNaN(n))setPGross('');
+                          else setPGross((n*(1+t/100)).toFixed(2));
+                        }}
+                        className="w-full bg-zinc-950 border border-zinc-800 p-3 rounded-xl outline-none focus:border-emerald-500 text-sm"
+                        placeholder="0.00"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-zinc-500 uppercase">KDV %</label>
+                      <select
+                        value={pTax}
+                        onChange={e=>{
+                          const t=e.target.value;
+                          setPTax(t);
+                          const taxNum=parseInt(t)||0;
+                          if(pGross.trim()!==''&&!isNaN(parseFloat(pGross))){
+                            setPNet((parseFloat(pGross)/(1+taxNum/100)).toFixed(2));
+                          }else if(pNet.trim()!==''&&!isNaN(parseFloat(pNet))){
+                            setPGross((parseFloat(pNet)*(1+taxNum/100)).toFixed(2));
+                          }
+                        }}
+                        className="w-full bg-zinc-950 border border-zinc-800 p-3 rounded-xl outline-none text-sm"
+                      >
+                        <option value="0">0</option><option value="1">1</option><option value="10">10</option><option value="20">20</option>
+                      </select>
+                    </div>
                     <div className="space-y-1.5"><label className="text-xs font-bold text-violet-400 uppercase">Başlangıç Stok</label><input type="number" value={pStock} onChange={e=>setPStock(e.target.value)} className="w-full bg-violet-950/20 border border-violet-900 p-3 rounded-xl outline-none text-violet-300 text-sm" placeholder="0"/></div>
-                    <div className="flex items-end"><button type="submit" className="w-full bg-emerald-500 text-zinc-950 font-black py-3 rounded-xl text-sm">KAYDET</button></div>
+                    <div className="col-span-2 lg:col-span-5 flex justify-end pt-1"><button type="submit" className="w-full lg:w-64 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-black py-3 rounded-xl text-sm shadow-lg shadow-emerald-500/20">ÜRÜNÜ KAYDET</button></div>
                   </form>
                 )}
                 <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-4 mb-6 space-y-4">
@@ -3127,9 +3189,58 @@ export default function App(){
               <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Kategori</label><select value={editForm.category} onChange={e=>setEditForm((p:any)=>({...p,category:e.target.value}))} className="w-full bg-zinc-950 border border-zinc-700 p-3 rounded-xl text-white outline-none text-sm"><option value="">— Seç —</option>{categories.map(c=><option key={c.id} value={c.name}>{c.name}</option>)}</select></div>
               <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Birim</label><select value={editForm.unit} onChange={e=>setEditForm((p:any)=>({...p,unit:e.target.value}))} className="w-full bg-zinc-950 border border-zinc-700 p-3 rounded-xl text-white outline-none text-sm"><option>Adet</option><option>Koli</option><option>Paket</option></select></div>
               <div className="space-y-1.5"><label className="text-xs font-bold text-blue-400 uppercase">Alış Fiyatı</label><input type="number" step="0.01" value={editForm.costPrice} onChange={e=>setEditForm((p:any)=>({...p,costPrice:e.target.value}))} className="w-full bg-blue-950/20 border border-blue-900 p-3 rounded-xl text-blue-300 outline-none text-sm"/></div>
-              <div className="space-y-1.5"><label className="text-xs font-bold text-emerald-400 uppercase">NET Satış</label><input type="number" step="0.01" value={editForm.netPrice} onChange={e=>setEditForm((p:any)=>({...p,netPrice:e.target.value}))} className="w-full bg-zinc-950 border border-emerald-900 p-3 rounded-xl text-white outline-none focus:border-emerald-500 text-sm"/></div>
-              <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">KDV %</label><select value={editForm.taxRate} onChange={e=>setEditForm((p:any)=>({...p,taxRate:e.target.value}))} className="w-full bg-zinc-950 border border-zinc-700 p-3 rounded-xl text-white outline-none text-sm"><option value="0">0</option><option value="1">1</option><option value="10">10</option><option value="20">20</option></select></div>
-              <div className="space-y-1.5"><label className="text-xs font-bold text-white uppercase">Brüt Fiyat</label><input type="number" step="0.01" value={editForm.grossPrice} onChange={e=>setEditForm((p:any)=>({...p,grossPrice:e.target.value}))} className="w-full bg-zinc-950 border border-zinc-700 p-3 rounded-xl text-white outline-none text-sm" placeholder="Boş = NET×KDV"/></div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-emerald-400 uppercase">BRÜT Fiyat (KDV Dahil)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={editForm.grossPrice}
+                  onChange={e=>{
+                    const v=e.target.value;
+                    const g=parseFloat(v);
+                    const t=parseInt(editForm.taxRate)||0;
+                    setEditForm((p:any)=>({...p,grossPrice:v,netPrice:(!v||isNaN(g))?'':(g/(1+t/100)).toFixed(2)}));
+                  }}
+                  className="w-full bg-emerald-950/20 border border-emerald-500/60 p-3 rounded-xl text-emerald-300 font-black outline-none focus:border-emerald-400 text-sm"
+                  placeholder="0.00"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-zinc-400 uppercase">NET Satış (KDV Hariç)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={editForm.netPrice}
+                  onChange={e=>{
+                    const v=e.target.value;
+                    const n=parseFloat(v);
+                    const t=parseInt(editForm.taxRate)||0;
+                    setEditForm((p:any)=>({...p,netPrice:v,grossPrice:(!v||isNaN(n))?'':(n*(1+t/100)).toFixed(2)}));
+                  }}
+                  className="w-full bg-zinc-950 border border-zinc-700 p-3 rounded-xl text-white outline-none focus:border-emerald-500 text-sm"
+                  placeholder="0.00"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-zinc-500 uppercase">KDV %</label>
+                <select
+                  value={editForm.taxRate}
+                  onChange={e=>{
+                    const t=e.target.value;
+                    const taxNum=parseInt(t)||0;
+                    setEditForm((p:any)=>{
+                      const g=parseFloat(p.grossPrice);
+                      const n=parseFloat(p.netPrice);
+                      if(String(p.grossPrice??'').trim()!==''&&!isNaN(g))return{...p,taxRate:t,netPrice:(g/(1+taxNum/100)).toFixed(2)};
+                      if(String(p.netPrice??'').trim()!==''&&!isNaN(n))return{...p,taxRate:t,grossPrice:(n*(1+taxNum/100)).toFixed(2)};
+                      return{...p,taxRate:t};
+                    });
+                  }}
+                  className="w-full bg-zinc-950 border border-zinc-700 p-3 rounded-xl text-white outline-none text-sm"
+                >
+                  <option value="0">0</option><option value="1">1</option><option value="10">10</option><option value="20">20</option>
+                </select>
+              </div>
               <div className="space-y-1.5"><label className="text-xs font-bold text-violet-400 uppercase">Stok</label><input type="number" value={editForm.stock} onChange={e=>setEditForm((p:any)=>({...p,stock:e.target.value}))} className="w-full bg-violet-950/20 border border-violet-900 p-3 rounded-xl text-violet-300 outline-none text-sm"/></div>
               <div className="col-span-2 flex gap-3 pt-2 border-t border-zinc-800"><button type="button" onClick={()=>setEditingProduct(null)} className="flex-1 bg-zinc-800 text-zinc-400 py-3 rounded-xl font-bold border border-zinc-700 text-sm">İptal</button><button type="submit" className="flex-1 bg-emerald-500 text-zinc-950 py-3 rounded-xl font-black flex items-center justify-center gap-2 text-sm shadow-lg shadow-emerald-500/20"><Save size={15}/> Kaydet</button></div>
             </form>
