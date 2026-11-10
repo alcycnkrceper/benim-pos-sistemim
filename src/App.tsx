@@ -63,7 +63,16 @@ interface ReceiptSettings {
   companyName:string; companySubtitle:string; address:string; phone:string;
   taxNo:string; website:string; footerLine1:string; footerLine2:string;
   showTaxNo:boolean; showAddress:boolean; showPhone:boolean; showWebsite:boolean; showItemTax:boolean;
+  showDate:boolean; showStaff:boolean; showCustomer:boolean; showUnitPrice:boolean; showDiscount:boolean; showFooter:boolean;
   borderStyle:BorderStyle; fontSize:FontSize; paperSize:PaperSize;
+  customWidthPx:number;
+  marginTop:number;
+  marginBottom:number;
+  marginLeft:number;
+  marginRight:number;
+  rowSpacing:number;
+  tableFontSize:number;
+  totalFontSize:number;
   companyNameFontSize:number;
   companyNameSingleLine:boolean;
   companyNameAlign:'left'|'center'|'right';
@@ -76,22 +85,47 @@ interface ReceiptSettings {
 const DEFAULT_SETTINGS: ReceiptSettings = {
   companyName:'MERKEZ ŞUBE', companySubtitle:'TOPTAN TİCARET VE SATIŞ FİŞİ',
   address:'', phone:'', taxNo:'', website:'',
-  footerLine1:'BİZİ TERCİH ETTİĞİNİZ İÇİN TEŞEKKÜR EDERİZ.', footerLine2:'YİNE BEKLERİZ!',
+  footerLine1:'TEŞEKKÜR EDERİZ.', footerLine2:'',
   showTaxNo:true, showAddress:false, showPhone:false, showWebsite:false, showItemTax:false,
-  borderStyle:'thick', fontSize:'normal', paperSize:'a4',
-  companyNameFontSize:36,
-  companyNameSingleLine:false,
+  showDate:true, showStaff:true, showCustomer:true, showUnitPrice:true, showDiscount:true, showFooter:true,
+  borderStyle:'none', fontSize:'small', paperSize:'80mm',
+  customWidthPx:300,
+  marginTop:2,
+  marginBottom:2,
+  marginLeft:4,
+  marginRight:4,
+  rowSpacing:2,
+  tableFontSize:11,
+  totalFontSize:14,
+  companyNameFontSize:18,
+  companyNameSingleLine:true,
   companyNameAlign:'left',
-  subtitleFontSize:11,
+  subtitleFontSize:9,
   subtitleAlign:'left',
   logoBase64:null,
-  logoSize:80,
+  logoSize:55,
   logoAlign:'center',
 };
-const PAPER_WIDTHS:Record<PaperSize,number> = {'58mm':220,'80mm':310,'a5':520,'a4':680};
+const PAPER_WIDTHS:Record<PaperSize,number> = {'58mm':210,'80mm':300,'a5':520,'a4':680};
 const PAPER_LABELS:Record<PaperSize,string> = {'58mm':'Termal 58mm','80mm':'Termal 80mm','a5':'A5','a4':'A4'};
 const loadSettings = ():ReceiptSettings => { try { const s=localStorage.getItem('rcptS'); return s?{...DEFAULT_SETTINGS,...JSON.parse(s)}:DEFAULT_SETTINGS; } catch { return DEFAULT_SETTINGS; } };
 const saveSettingsLS = (s:ReceiptSettings) => localStorage.setItem('rcptS',JSON.stringify(s));
+
+// ─── FOCUS KAYBINI ÖNLEMEK İÇİN APP DIŞINA ALINAN YARDIMCI BİLEŞENLER ───
+const Field=({label,icon,value,onChange,placeholder='',type='text'}:{label:string;icon?:React.ReactNode;value:string;onChange:(v:string)=>void;placeholder?:string;type?:string})=>(
+  <div className="space-y-1.5">
+    <label className="flex items-center gap-1.5 text-xs font-bold text-zinc-500 uppercase tracking-wide">{icon}{label}</label>
+    <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} className="w-full bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-emerald-500 text-sm"/>
+  </div>
+);
+const Toggle=({label,value,onChange}:{label:string;value:boolean;onChange:(v:boolean)=>void})=>(
+  <div className="flex items-center justify-between py-2.5 border-b border-zinc-800/40">
+    <span className="text-zinc-300 text-sm font-medium">{label}</span>
+    <button type="button" onClick={()=>onChange(!value)} className={'w-11 h-6 rounded-full relative transition-all '+(value?'bg-emerald-500':'bg-zinc-700')}>
+      <span className={'absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all '+(value?'left-5':'left-0.5')}/>
+    </button>
+  </div>
+);
 
 const ALL_PERMISSIONS = [
   {key:'pos',group:'Satış',label:'Hızlı Satış (POS)',icon:'🛒'},
@@ -154,85 +188,133 @@ async function exportParasut(arr:any[],fname?:string,opts:{firmName?:string;depo
   XLSX.writeFile(wb,fname||'parasut_'+(new Date().toISOString().slice(0,10))+'.xlsx');
   return{invoiceCount:inv.length,lineCount};
 }
+// ─── 80MM KAĞIT TASARRUFLU VE TAM ÖZELLEŞTİRİLEBİLİR FİŞ ŞABLONU ──────────
 function ReceiptTemplate({sale,settings,preview=false}:{sale:any;settings:ReceiptSettings;preview?:boolean}){
   if(!sale)return null;
-  const pw=PAPER_WIDTHS[settings.paperSize];
-  const fsMap={small:0.82,normal:1,large:1.18};
-  const fs=fsMap[settings.fontSize];
-  const bdr=settings.borderStyle==='thick'?'4px solid black':settings.borderStyle==='thin'?'1px solid #555':'0px solid transparent';
-  const hBdr=settings.borderStyle==='none'?'2px solid #e5e7eb':bdr;
   const small=settings.paperSize==='58mm';
-  const cnSize=settings.companyNameFontSize??36;
-  const stSize=settings.subtitleFontSize??11;
+  const pw=settings.customWidthPx||PAPER_WIDTHS[settings.paperSize];
+  const fsMap={small:0.78,normal:0.9,large:1.05};
+  const fs=fsMap[settings.fontSize];
+  const bdr=settings.borderStyle==='thick'?'2px solid black':settings.borderStyle==='thin'?'1px solid #333':'none';
+  const divider='1px dashed #000';
+  const cnSize=settings.companyNameFontSize??18;
+  const stSize=settings.subtitleFontSize??9;
+  const mTop=settings.marginTop??2;
+  const mBottom=settings.marginBottom??2;
+  const mLeft=settings.marginLeft??4;
+  const mRight=settings.marginRight??4;
+  const rPad=settings.rowSpacing??2;
+  const tblFs=settings.tableFontSize??11;
+  const totFs=settings.totalFontSize??14;
+  const showUnit=(settings.showUnitPrice??true)&&!small;
   return (
-    <div style={{maxWidth:preview?'100%':pw+'px',margin:'0 auto',padding:preview?'16px':'28px',background:'white',color:'black',fontFamily:'Arial,sans-serif',fontSize:(fs)+'rem',border:preview?'none':bdr,boxSizing:'border-box'}}>
+    <div style={{
+      maxWidth:preview?'100%':pw+'px',
+      width:preview?'100%':pw+'px',
+      margin:'0 auto',
+      paddingTop:mTop+'px',
+      paddingBottom:mBottom+'px',
+      paddingLeft:mLeft+'px',
+      paddingRight:mRight+'px',
+      background:'white',
+      color:'black',
+      fontFamily:"'Arial Narrow', Arial, sans-serif",
+      fontSize:fs+'rem',
+      lineHeight:1.15,
+      border:bdr,
+      boxSizing:'border-box'
+    }}>
       {settings.logoBase64&&(
-        <div style={{textAlign:settings.logoAlign??'center',marginBottom:10}}>
-          <img src={settings.logoBase64} alt="logo" style={{width:(settings.logoSize??80)+'px',height:'auto',display:'inline-block'}}/>
+        <div style={{textAlign:settings.logoAlign??'center',marginBottom:4}}>
+          <img src={settings.logoBase64} alt="logo" style={{width:(settings.logoSize??55)+'px',height:'auto',display:'inline-block'}}/>
         </div>
       )}
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',paddingBottom:'14px',marginBottom:'14px',borderBottom:hBdr}}>
-        <div style={{flex:1}}>
-          <div style={{fontSize:cnSize+'px',fontWeight:900,textTransform:'uppercase',letterSpacing:'-0.02em',lineHeight:1.1,textAlign:settings.companyNameAlign??'left',whiteSpace:settings.companyNameSingleLine?'nowrap':'normal',overflow:settings.companyNameSingleLine?'hidden':'visible',textOverflow:settings.companyNameSingleLine?'ellipsis':'clip'}}>{settings.companyName}</div>
-          <div style={{fontSize:stSize+'px',fontWeight:700,color:'#666',marginTop:3,textAlign:settings.subtitleAlign??'left'}}>{settings.companySubtitle}</div>
-          {settings.showAddress&&settings.address&&<div style={{fontSize:(fs*0.68).toFixed(2)+'rem',color:'#555',marginTop:2}}>📍 {settings.address}</div>}
-          {settings.showPhone&&settings.phone&&<div style={{fontSize:(fs*0.68).toFixed(2)+'rem',color:'#555'}}>📞 {settings.phone}</div>}
-          {sale.isMerged&&<div style={{fontSize:(fs*0.62).toFixed(2)+'rem',fontWeight:700,color:'#666',marginTop:5,background:'#f3f4f6',padding:'2px 6px',borderRadius:4,display:'inline-block'}}>BİRLEŞİK — {sale.mergedCount} satış</div>}
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',paddingBottom:4,marginBottom:4,borderBottom:divider}}>
+        <div style={{flex:1,minWidth:0,paddingRight:4}}>
+          <div style={{
+            fontSize:cnSize+'px',
+            fontWeight:900,
+            textTransform:'uppercase',
+            lineHeight:1.05,
+            textAlign:settings.companyNameAlign??'left',
+            whiteSpace:settings.companyNameSingleLine?'nowrap':'normal',
+            overflow:'hidden',
+            textOverflow:'ellipsis'
+          }}>{settings.companyName}</div>
+          {settings.companySubtitle&&(
+            <div style={{fontSize:stSize+'px',fontWeight:700,color:'#333',marginTop:1,textAlign:settings.subtitleAlign??'left'}}>
+              {settings.companySubtitle}
+            </div>
+          )}
+          {settings.showAddress&&settings.address&&<div style={{fontSize:'10px',color:'#333'}}>{settings.address}</div>}
+          {settings.showPhone&&settings.phone&&<div style={{fontSize:'10px',color:'#333'}}>Tel: {settings.phone}</div>}
+          {settings.showWebsite&&settings.website&&<div style={{fontSize:'10px',color:'#333'}}>{settings.website}</div>}
+          {settings.taxNo&&<div style={{fontSize:'9px',color:'#444'}}>VKN: {settings.taxNo}</div>}
         </div>
-        <div style={{textAlign:'right',fontSize:(fs*0.72).toFixed(2)+'rem'}}>
-          <div><strong>TARİH:</strong> {sale.isMerged?new Date().toLocaleDateString('tr-TR'):sale.date?.split(' ')[0]}</div>
-          {sale.isMerged&&sale.dateRange&&<div style={{color:'#666'}}><strong>DÖNEM:</strong> {sale.dateRange}</div>}
-          {!sale.isMerged&&<div><strong>SAAT:</strong> {sale.date?.split(' ')[1]}</div>}
-          <div><strong>FİŞ NO:</strong> #{sale.id?.slice(-6).toUpperCase()}</div>
-          {sale.staffName&&<div style={{color:'#888'}}><strong>KASİYER:</strong> {sale.staffName}</div>}
+        <div style={{textAlign:'right',fontSize:'10px',lineHeight:1.2,whiteSpace:'nowrap'}}>
+          {(settings.showDate??true)&&(
+            <div><strong>{sale.isMerged?new Date().toLocaleDateString('tr-TR'):sale.date?.split(' ')[0]}</strong> {!sale.isMerged&&sale.date?.split(' ')[1]?.slice(0,5)}</div>
+          )}
+          <div>Fiş: <strong>#{sale.id?.slice(-6).toUpperCase()}</strong></div>
+          {(settings.showStaff??true)&&sale.staffName&&<div>Kasiyer: {sale.staffName}</div>}
+          {sale.isMerged&&<div><strong>BİRLEŞİK ({sale.mergedCount})</strong></div>}
         </div>
       </div>
-      <div style={{background:'#f9fafb',border:'2px solid '+(settings.borderStyle==='none'?'#e5e7eb':'#000'),borderRadius:6,padding:(small?8:14)+'px',marginBottom:14}}>
-        <div style={{fontSize:(fs*(small?0.9:1.1)).toFixed(2)+'rem',fontWeight:900,textTransform:'uppercase'}}>SAYIN: {sale.customerName}</div>
-        {settings.showTaxNo&&<div style={{fontWeight:700,color:'#555',marginTop:3,fontSize:(fs*0.78).toFixed(2)+'rem'}}>VERGİ/TC: {sale.customerTax||'-'}</div>}
-
-      </div>
-      <table style={{width:'100%',borderCollapse:'collapse',marginBottom:20}}>
+      {(settings.showCustomer??true)&&(
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',paddingBottom:4,marginBottom:4,borderBottom:divider,fontSize:tblFs+'px'}}>
+          <div style={{fontWeight:900,textTransform:'uppercase',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+            MÜŞTERİ: {sale.customerName}
+          </div>
+          {settings.showTaxNo&&sale.customerTax&&sale.customerTax!=='-'&&(
+            <div style={{fontWeight:700,fontSize:Math.max(8,tblFs-1)+'px',whiteSpace:'nowrap',marginLeft:6}}>
+              VKN/TC: {sale.customerTax}
+            </div>
+          )}
+        </div>
+      )}
+      <table style={{width:'100%',borderCollapse:'collapse',marginBottom:4}}>
         <thead>
-          <tr style={{borderBottom:hBdr}}>
-            <th style={{textAlign:'left',padding:String(Math.round(fs*7))+'px 0',fontSize:(fs*0.88).toFixed(2)+'rem'}}>ÜRÜN</th>
-            <th style={{textAlign:'center',padding:String(Math.round(fs*7))+'px 0',fontSize:(fs*0.88).toFixed(2)+'rem'}}>ADET</th>
-            {settings.showItemTax&&<th style={{textAlign:'center',fontSize:(fs*0.88).toFixed(2)+'rem'}}>KDV</th>}
-            {!small&&<th style={{textAlign:'right',padding:String(Math.round(fs*7))+'px 0',fontSize:(fs*0.88).toFixed(2)+'rem'}}>BİRİM</th>}
-            <th style={{textAlign:'right',padding:String(Math.round(fs*7))+'px 0',fontSize:(fs*0.88).toFixed(2)+'rem'}}>TOPLAM</th>
+          <tr style={{borderBottom:divider,fontSize:Math.max(8,tblFs-1)+'px'}}>
+            <th style={{textAlign:'left',padding:rPad+'px 0'}}>ÜRÜN</th>
+            <th style={{textAlign:'center',padding:rPad+'px 2px'}}>AD</th>
+            {settings.showItemTax&&<th style={{textAlign:'center',padding:rPad+'px 2px'}}>KDV</th>}
+            {showUnit&&<th style={{textAlign:'right',padding:rPad+'px 2px'}}>BİRİM</th>}
+            <th style={{textAlign:'right',padding:rPad+'px 0'}}>TUTAR</th>
           </tr>
         </thead>
         <tbody>
           {(sale.items||[]).map((item:any,i:number)=>(
-            <tr key={i} style={{borderBottom:'1px solid #f0f0f0'}}>
-              <td style={{padding:String(Math.round(fs*5))+'px 0',fontWeight:700,fontSize:(fs*0.85).toFixed(2)+'rem'}}>{item.name}</td>
-              <td style={{padding:String(Math.round(fs*5))+'px 0',textAlign:'center',fontWeight:900}}>{item.qty}</td>
-              {settings.showItemTax&&<td style={{textAlign:'center',color:'#666',fontSize:(fs*0.8).toFixed(2)+'rem'}}>%{nKdv(item.taxRate)}</td>}
-              {!small&&<td style={{padding:String(Math.round(fs*5))+'px 0',textAlign:'right',color:'#555',fontSize:(fs*0.85).toFixed(2)+'rem'}}>₺{(item.grossPrice||0).toFixed(2)}</td>}
-              <td style={{padding:String(Math.round(fs*5))+'px 0',textAlign:'right',fontWeight:900,fontSize:(fs*0.9).toFixed(2)+'rem'}}>₺{((item.grossPrice||0)*(item.qty||1)).toFixed(2)}</td>
+            <tr key={i} style={{borderBottom:'1px dotted #ccc',fontSize:tblFs+'px'}}>
+              <td style={{padding:rPad+'px 2px '+rPad+'px 0',fontWeight:700,wordBreak:'break-word'}}>{item.name}</td>
+              <td style={{padding:rPad+'px 2px',textAlign:'center',fontWeight:900,whiteSpace:'nowrap'}}>{item.qty}</td>
+              {settings.showItemTax&&<td style={{padding:rPad+'px 2px',textAlign:'center',fontSize:Math.max(8,tblFs-2)+'px'}}>%{nKdv(item.taxRate)}</td>}
+              {showUnit&&<td style={{padding:rPad+'px 2px',textAlign:'right',whiteSpace:'nowrap'}}>{(item.grossPrice||0).toFixed(2)}</td>}
+              <td style={{padding:rPad+'px 0 '+rPad+'px 2px',textAlign:'right',fontWeight:900,whiteSpace:'nowrap'}}>
+                {((item.grossPrice||0)*(item.qty||1)).toFixed(2)}
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
-      <div style={{display:'flex',justifyContent:'flex-end'}}>
-        <div style={{width:small?'100%':'260px',borderTop:hBdr,paddingTop:10}}>
-          <div style={{display:'flex',justifyContent:'space-between',color:'#555',marginBottom:4,fontSize:(fs*0.85).toFixed(2)+'rem',fontWeight:700}}>
-            <span>Ara Toplam:</span><span>₺{(sale.subTotal||sale.total||0).toFixed(2)}</span>
-          </div>
-          {(sale.discountAmount||0)>0&&(
-            <div style={{display:'flex',justifyContent:'space-between',color:'#555',marginBottom:6,paddingBottom:6,borderBottom:'1px solid #e5e7eb',fontSize:(fs*0.85).toFixed(2)+'rem',fontWeight:700}}>
-              <span>İskonto:</span><span>- ₺{(sale.discountAmount||0).toFixed(2)}</span>
+      <div style={{borderTop:divider,paddingTop:3,fontSize:tblFs+'px'}}>
+        {(settings.showDiscount??true)&&(sale.discountAmount||0)>0&&(
+          <>
+            <div style={{display:'flex',justifyContent:'space-between',fontWeight:700}}>
+              <span>Ara Toplam:</span><span>₺{(sale.subTotal||sale.total||0).toFixed(2)}</span>
             </div>
-          )}
-          <div style={{display:'flex',justifyContent:'space-between',fontWeight:900,fontSize:(fs*(small?1.3:1.8)).toFixed(2)+'rem',marginTop:6}}>
-            <span>TOPLAM:</span><span>₺{(sale.total||0).toFixed(2)}</span>
-          </div>
+            <div style={{display:'flex',justifyContent:'space-between',fontWeight:700}}>
+              <span>İskonto:</span><span>-₺{(sale.discountAmount||0).toFixed(2)}</span>
+            </div>
+          </>
+        )}
+        <div style={{display:'flex',justifyContent:'space-between',fontWeight:900,fontSize:totFs+'px',marginTop:2}}>
+          <span>TOPLAM ({sale.method||'Satış'}):</span>
+          <span>₺{(sale.total||0).toFixed(2)}</span>
         </div>
       </div>
-      {(settings.footerLine1||settings.footerLine2)&&(
-        <div style={{marginTop:28,textAlign:'center',borderTop:'2px dashed #d1d5db',paddingTop:12,color:'#9ca3af',fontWeight:700,fontSize:(fs*0.72).toFixed(2)+'rem'}}>
-          {settings.footerLine1&&<div>{settings.footerLine1}</div>}
-          {settings.footerLine2&&<div style={{marginTop:2}}>{settings.footerLine2}</div>}
+      {(settings.showFooter??true)&&(settings.footerLine1||settings.footerLine2)&&(
+        <div style={{marginTop:4,textAlign:'center',borderTop:divider,paddingTop:3,fontSize:Math.max(8,tblFs-2)+'px',fontWeight:700}}>
+          {[settings.footerLine1,settings.footerLine2].filter(Boolean).join(' • ')}
         </div>
       )}
     </div>
@@ -323,6 +405,7 @@ export default function App(){
   const [searchQuery,setSearchQuery]=useState('');
   const [cartCustomer,setCartCustomer]=useState('');
   const [discountPct,setDiscountPct]=useState('');
+  const [discountAmtInput,setDiscountAmtInput]=useState('');
   const [flash,setFlash]=useState(false);
   const [lastSale,setLastSale]=useState<any>(null);
   const [isVeresiyeOpen,setIsVeresiyeOpen]=useState(false);
@@ -341,6 +424,7 @@ export default function App(){
   const [quoteDraft,setQuoteDraft]=useState<any[]>([]);
   const [quoteCustomer,setQuoteCustomer]=useState('');
   const [quoteDiscount,setQuoteDiscount]=useState('');
+  const [quoteDiscountAmtInput,setQuoteDiscountAmtInput]=useState('');
   const [quoteNote,setQuoteNote]=useState('');
   const [quoteSearch,setQuoteSearch]=useState('');
   const [quoteFilter,setQuoteFilter]=useState('all');
@@ -651,45 +735,50 @@ export default function App(){
 
   // ── Cart ──────────────────────────────────────────────────────────────
   const addToCart=(p:any)=>{setCart(prev=>{const ex=prev.find((i:any)=>i.id===p.id);if(ex)return prev.map((i:any)=>i.id===p.id?{...i,qty:i.qty+1}:i);return[...prev,{...p,qty:1}];});setSearchQuery('');};
-  const rawTotal=cart.reduce((t:number,i:any)=>t+((i.grossPrice||0)*i.qty),0);
-  const totalCostCart=cart.reduce((t:number,i:any)=>t+((i.costPrice||0)*i.qty),0);
-  const discountVal=parseFloat(discountPct)||0;
-  const discountAmount=rawTotal*(discountVal/100);
-  const finalTotal=rawTotal-discountAmount;
+  const rawTotal=cart.reduce((t:number,i:any)=>t+((Number(i.grossPrice)||0)*(Number(i.qty)||0)),0);
+  const totalCostCart=cart.reduce((t:number,i:any)=>t+((Number(i.costPrice)||0)*(Number(i.qty)||0)),0);
+  const manualDiscAmt=parseFloat(discountAmtInput);
+  const hasManualDiscAmt=discountAmtInput.trim()!==''&&!isNaN(manualDiscAmt);
+  const discountAmount=hasManualDiscAmt?Math.min(rawTotal,Math.max(0,manualDiscAmt)):rawTotal*((parseFloat(discountPct)||0)/100);
+  const discountVal=rawTotal>0?parseFloat(((discountAmount/rawTotal)*100).toFixed(2)):0;
+  const finalTotal=Math.max(0,rawTotal-discountAmount);
 
   // ── Sale ──────────────────────────────────────────────────────────────
   const finishSale=async(method:string)=>{
     if(cart.length===0)return;
     if(method==='Veresiye'&&!cartCustomer)return alert('Veresiye satış için Müşteri seçmelisiniz!');
     const ac=customers.find((c:any)=>c.id===cartCustomer);
-    const sd={items:cart,subTotal:rawTotal,discountPct:discountVal,discountAmount,totalCost:totalCostCart,total:finalTotal,method,customerName:ac?ac.name:'Perakende Müşteri',customerTax:ac?ac.taxNum:'-',date:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name};
+    const cleanCart=cart.map((i:any)=>({...i,qty:Math.max(1,Number(i.qty)||1),grossPrice:Math.max(0,Number(i.grossPrice)||0)}));
+    const sd={items:cleanCart,subTotal:rawTotal,discountPct:discountVal,discountAmount,totalCost:totalCostCart,total:finalTotal,method,customerName:ac?ac.name:'Perakende Müşteri',customerTax:ac?ac.taxNum:'-',date:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name};
     const ref=await addDoc(collection(db,'sales'),sd);
     if(method==='Veresiye'&&ac)await updateDoc(doc(db,'customers',ac.id),{balance:(ac.balance||0)+finalTotal});
-    for(const item of cart){const p=products.find(p=>p.id===item.id);if(p&&typeof p.stock==='number')await updateDoc(doc(db,'products',p.id),{stock:Math.max(0,(p.stock||0)-item.qty)});}
+    for(const item of cleanCart){const p=products.find(p=>p.id===item.id);if(p&&typeof p.stock==='number')await updateDoc(doc(db,'products',p.id),{stock:Math.max(0,(p.stock||0)-item.qty)});}
     await logAction('SATIŞ',(ac?ac.name:'Perakende')+' - '+(method)+' - ₺'+(finalTotal.toFixed(2)),finalTotal);
-    setLastSale({id:ref.id,...sd});setCart([]);setCartCustomer('');setDiscountPct('');setIsVeresiyeOpen(false);
+    setLastSale({id:ref.id,...sd});setCart([]);setCartCustomer('');setDiscountPct('');setDiscountAmtInput('');setIsVeresiyeOpen(false);
   };
   const handleSplitSale=async()=>{
     const nakit=parseFloat(splitNakit)||0,kart=parseFloat(splitKart)||0;
     if(Math.abs(nakit+kart-finalTotal)>0.01)return alert('Nakit+Kart=₺'+((nakit+kart).toFixed(2))+' ≠ ₺'+(finalTotal.toFixed(2)));
     if(cart.length===0)return;
     const ac=customers.find((c:any)=>c.id===cartCustomer);
-    const base={items:cart,subTotal:rawTotal,discountPct:discountVal,discountAmount,totalCost:totalCostCart,customerName:ac?ac.name:'Perakende Müşteri',customerTax:ac?ac.taxNum:'-',date:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name,isSplit:true};
+    const cleanCart=cart.map((i:any)=>({...i,qty:Math.max(1,Number(i.qty)||1),grossPrice:Math.max(0,Number(i.grossPrice)||0)}));
+    const base={items:cleanCart,subTotal:rawTotal,discountPct:discountVal,discountAmount,totalCost:totalCostCart,customerName:ac?ac.name:'Perakende Müşteri',customerTax:ac?ac.taxNum:'-',date:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name,isSplit:true};
     if(nakit>0)await addDoc(collection(db,'sales'),{...base,total:nakit,method:'Nakit'});
     if(kart>0)await addDoc(collection(db,'sales'),{...base,total:kart,method:'Kart'});
-    for(const item of cart){const p=products.find(p=>p.id===item.id);if(p&&typeof p.stock==='number')await updateDoc(doc(db,'products',p.id),{stock:Math.max(0,(p.stock||0)-item.qty)});}
+    for(const item of cleanCart){const p=products.find(p=>p.id===item.id);if(p&&typeof p.stock==='number')await updateDoc(doc(db,'products',p.id),{stock:Math.max(0,(p.stock||0)-item.qty)});}
     await logAction('BÖLÜNMÜŞ_SATIŞ','Nakit:₺'+(nakit)+'+Kart:₺'+(kart),finalTotal);
-    setLastSale({id:'SPLIT-'+(Date.now()),items:cart,total:finalTotal,method:'Nakit ₺'+(nakit)+' + Kart ₺'+(kart),customerName:ac?ac.name:'Perakende Müşteri',date:new Date().toLocaleString('tr-TR'),staffName:currentStaff?.name});
-    setCart([]);setCartCustomer('');setDiscountPct('');setSplitModal(false);setSplitNakit('');setSplitKart('');
+    setLastSale({id:'SPLIT-'+(Date.now()),items:cleanCart,total:finalTotal,method:'Nakit ₺'+(nakit)+' + Kart ₺'+(kart),customerName:ac?ac.name:'Perakende Müşteri',date:new Date().toLocaleString('tr-TR'),staffName:currentStaff?.name});
+    setCart([]);setCartCustomer('');setDiscountPct('');setDiscountAmtInput('');setSplitModal(false);setSplitNakit('');setSplitKart('');
   };
 
   // ── Orders ────────────────────────────────────────────────────────────
   const handleCreateOrder=async()=>{
     if(cart.length===0)return alert('Sepet boş!');
     const ac=customers.find((c:any)=>c.id===orderCustomer);
-    await addDoc(collection(db,'orders'),{items:cart,subTotal:rawTotal,discountPct:discountVal,discountAmount,total:finalTotal,customerName:ac?ac.name:'Müşteri belirtilmemiş',customerTax:ac?ac.taxNum:'-',customerId:orderCustomer||'',note:orderNote,deliveryDate:orderDeliveryDate||'',status:'bekliyor',createdAt:new Date().toLocaleString('tr-TR'),updatedAt:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name});
+    const cleanCart=cart.map((i:any)=>({...i,qty:Math.max(1,Number(i.qty)||1),grossPrice:Math.max(0,Number(i.grossPrice)||0)}));
+    await addDoc(collection(db,'orders'),{items:cleanCart,subTotal:rawTotal,discountPct:discountVal,discountAmount,total:finalTotal,customerName:ac?ac.name:'Müşteri belirtilmemiş',customerTax:ac?ac.taxNum:'-',customerId:orderCustomer||'',note:orderNote,deliveryDate:orderDeliveryDate||'',status:'bekliyor',createdAt:new Date().toLocaleString('tr-TR'),updatedAt:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name});
     await logAction('SİPARİŞ_OLUŞTUR',(ac?ac.name:'Müşterisiz')+' - ₺'+(finalTotal.toFixed(2)),finalTotal);
-    setCart([]);setCartCustomer('');setDiscountPct('');setOrderCustomer('');setOrderNote('');setOrderDeliveryDate('');setOrderMode(false);
+    setCart([]);setCartCustomer('');setDiscountPct('');setDiscountAmtInput('');setOrderCustomer('');setOrderNote('');setOrderDeliveryDate('');setOrderMode(false);
     alert('Sipariş oluşturuldu!');
   };
   const handleOrderStatus=async(orderId:string,newStatus:string)=>{
@@ -698,7 +787,12 @@ export default function App(){
     await logAction('SİPARİŞ_DURUM','#'+(orderId.slice(-5))+' → '+(newStatus));
     if(newStatus==='gönderildi'&&order){
       const ac=customers.find((c:any)=>c.id===order.customerId);
-      const sd={items:order.items,subTotal:order.subTotal,discountPct:order.discountPct,discountAmount:order.discountAmount,totalCost:0,total:order.total,method:order.customerId?'Veresiye':'Nakit',customerName:order.customerName,customerTax:order.customerTax,date:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name};
+      const orderTotalCost=(order.items||[]).reduce((sum:number,item:any)=>{
+        const p=products.find(pr=>pr.id===item.id);
+        const unitCost=Number(item.costPrice??p?.costPrice??0);
+        return sum+unitCost*(Number(item.qty)||1);
+      },0);
+      const sd={items:order.items,subTotal:order.subTotal,discountPct:order.discountPct,discountAmount:order.discountAmount,totalCost:orderTotalCost,total:order.total,method:order.customerId?'Veresiye':'Nakit',customerName:order.customerName,customerTax:order.customerTax,date:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name};
       await addDoc(collection(db,'sales'),sd);
       if(ac)await updateDoc(doc(db,'customers',ac.id),{balance:(ac.balance||0)+order.total});
       for(const item of(order.items||[])){const p=products.find(p=>p.id===item.id);if(p&&typeof p.stock==='number')await updateDoc(doc(db,'products',p.id),{stock:Math.max(0,(p.stock||0)-item.qty)});}
@@ -713,23 +807,31 @@ export default function App(){
   };
 
   // ── Quotes ────────────────────────────────────────────────────────────
-  const qRaw=useMemo(()=>quoteDraft.reduce((t:number,i:any)=>t+((i.grossPrice||0)*i.qty),0),[quoteDraft]);
-  const qDiscountVal=parseFloat(quoteDiscount)||0;
-  const qDiscountAmt=qRaw*(qDiscountVal/100);
-  const qTotal=qRaw-qDiscountAmt;
+  const qRaw=useMemo(()=>quoteDraft.reduce((t:number,i:any)=>t+((Number(i.grossPrice)||0)*(Number(i.qty)||0)),0),[quoteDraft]);
+  const qManualAmt=parseFloat(quoteDiscountAmtInput);
+  const qHasManualAmt=quoteDiscountAmtInput.trim()!==''&&!isNaN(qManualAmt);
+  const qDiscountAmt=qHasManualAmt?Math.min(qRaw,Math.max(0,qManualAmt)):qRaw*((parseFloat(quoteDiscount)||0)/100);
+  const qDiscountVal=qRaw>0?parseFloat(((qDiscountAmt/qRaw)*100).toFixed(2)):0;
+  const qTotal=Math.max(0,qRaw-qDiscountAmt);
   const addToQuote=(p:any)=>setQuoteDraft(prev=>{const ex=prev.find((i:any)=>i.id===p.id);if(ex)return prev.map((i:any)=>i.id===p.id?{...i,qty:i.qty+1}:i);return[...prev,{...p,qty:1}];});
   const handleSaveQuote=async()=>{
     if(quoteDraft.length===0)return alert('Sepet boş!');
     const ac=customers.find((c:any)=>c.id===quoteCustomer);
-    await addDoc(collection(db,'quotes'),{items:quoteDraft,subTotal:qRaw,discountPct:qDiscountVal,discountAmount:qDiscountAmt,total:qTotal,customerName:ac?ac.name:'',customerTax:ac?ac.taxNum:'-',customerId:quoteCustomer||'',note:quoteNote,status:'beklemede',createdAt:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name});
+    const cleanQuote=quoteDraft.map((i:any)=>({...i,qty:Math.max(1,Number(i.qty)||1),grossPrice:Math.max(0,Number(i.grossPrice)||0)}));
+    await addDoc(collection(db,'quotes'),{items:cleanQuote,subTotal:qRaw,discountPct:qDiscountVal,discountAmount:qDiscountAmt,total:qTotal,customerName:ac?ac.name:'',customerTax:ac?ac.taxNum:'-',customerId:quoteCustomer||'',note:quoteNote,status:'beklemede',createdAt:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name});
     await logAction('TEKLİF_OLUŞTUR',(ac?ac.name:'Müşterisiz')+' - ₺'+(qTotal.toFixed(2)),qTotal);
-    setQuoteDraft([]);setQuoteCustomer('');setQuoteDiscount('');setQuoteNote('');
+    setQuoteDraft([]);setQuoteCustomer('');setQuoteDiscount('');setQuoteDiscountAmtInput('');setQuoteNote('');
     alert('Teklif kaydedildi!');
   };
   const handleQuoteToSale=async(q:any)=>{
     if(!window.confirm('Bu teklifi satışa dönüştür?'))return;
     const ac=customers.find((c:any)=>c.id===q.customerId);
-    const sd={items:q.items,subTotal:q.subTotal,discountPct:q.discountPct,discountAmount:q.discountAmount,totalCost:0,total:q.total,method:q.customerId?'Veresiye':'Nakit',customerName:q.customerName||'Perakende Müşteri',customerTax:q.customerTax||'-',date:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name};
+    const quoteTotalCost=(q.items||[]).reduce((sum:number,item:any)=>{
+      const p=products.find(pr=>pr.id===item.id);
+      const unitCost=Number(item.costPrice??p?.costPrice??0);
+      return sum+unitCost*(Number(item.qty)||1);
+    },0);
+    const sd={items:q.items,subTotal:q.subTotal,discountPct:q.discountPct,discountAmount:q.discountAmount,totalCost:quoteTotalCost,total:q.total,method:q.customerId?'Veresiye':'Nakit',customerName:q.customerName||'Perakende Müşteri',customerTax:q.customerTax||'-',date:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name};
     await addDoc(collection(db,'sales'),sd);
     if(ac&&q.customerId)await updateDoc(doc(db,'customers',q.customerId),{balance:(ac.balance||0)+q.total});
     for(const item of(q.items||[])){const p=products.find(p=>p.id===item.id);if(p&&typeof p.stock==='number')await updateDoc(doc(db,'products',p.id),{stock:Math.max(0,(p.stock||0)-item.qty)});}
@@ -1174,7 +1276,7 @@ export default function App(){
     const dr=sorted.length>0?(parseDT(sorted[0].date).toLocaleDateString('tr-TR'))+' - '+(parseDT(sorted[sorted.length-1].date).toLocaleDateString('tr-TR')):'';
     return{id:'MRG-'+(Date.now()),customerName:selectedCustomer?.name||'',customerTax:selectedCustomer?.taxNum||'-',method:'Veresiye',date:new Date().toLocaleString('tr-TR'),dateRange:dr,items:allItems,subTotal:sorted.reduce((a,b)=>a+(b.subTotal||b.total||0),0),discountAmount:sorted.reduce((a,b)=>a+(b.discountAmount||0),0),discountPct:0,total:selTotal,isMerged:true,mergedCount:sorted.length};
   };
-  const handleMergedPrint=()=>{setMergedPrint(buildMerged());setTimeout(()=>window.print(),150);};
+  const handleMergedPrint=()=>{setPrintQuote(null);setPrintSale(null);setMergedPrint(buildMerged());setTimeout(()=>window.print(),150);};
   const handleMergedXlsx=async()=>{const cn=(selectedCustomer?.name||'musteri').replace(/[^a-zA-Z0-9_]/g,'_');await handleParasutExport(selSales,'parasut_'+(cn)+'_'+(new Date().toISOString().slice(0,10))+'.xlsx');};
   const customerProductHistory=useMemo(()=>{
     if(!selectedCustomer)return[];
@@ -1291,21 +1393,7 @@ export default function App(){
   const activePrintData=mergedPrint||printSale||lastSale;
   const demoSale={id:'DEMO123456',customerName:'Örnek Müşteri A.Ş.',customerTax:'1234567890',method:'Veresiye',date:'16.03.2026 14:30:00',staffName:'Kasiyer',items:[{name:'Dove Sabun 100gr',qty:5,grossPrice:60,taxRate:20},{name:'Ariel Deterjan 3kg',qty:2,grossPrice:185,taxRate:20}],subTotal:780,discountAmount:30,discountPct:4,total:750};
 
-  // ── UI helpers ────────────────────────────────────────────────────────
-  const Field=({label,icon,value,onChange,placeholder='',type='text'}:{label:string;icon?:React.ReactNode;value:string;onChange:(v:string)=>void;placeholder?:string;type?:string})=>(
-    <div className="space-y-1.5">
-      <label className="flex items-center gap-1.5 text-xs font-bold text-zinc-500 uppercase tracking-wide">{icon}{label}</label>
-      <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} className="w-full bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-emerald-500 text-sm"/>
-    </div>
-  );
-  const Toggle=({label,value,onChange}:{label:string;value:boolean;onChange:(v:boolean)=>void})=>(
-    <div className="flex items-center justify-between py-2.5 border-b border-zinc-800/40">
-      <span className="text-zinc-300 text-sm font-medium">{label}</span>
-      <button onClick={()=>onChange(!value)} className={'w-11 h-6 rounded-full relative transition-all '+(value?'bg-emerald-500':'bg-zinc-700')}>
-        <span className={'absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all '+(value?'left-5':'left-0.5')}/>
-      </button>
-    </div>
-  );
+
 
   if(!currentStaff) return <LoginScreen onLogin={staff=>{setCurrentStaff(staff);logAction('GİRİŞ','Sisteme giriş yapıldı');}}/>;
 
@@ -1510,23 +1598,106 @@ export default function App(){
                 <div className="flex items-center gap-2 mb-3 font-black text-base"><ShoppingCart className="text-emerald-500" size={17}/>{orderMode?'📦 YENİ SİPARİŞ':'SATIŞ FİŞİ'}</div>
                 {!orderMode&&<select value={cartCustomer} onChange={e=>setCartCustomer(e.target.value)} className="w-full bg-zinc-950 border border-zinc-700 p-2.5 rounded-xl text-white outline-none text-sm font-bold"><option value="">-- Perakende --</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>}
               </div>
-              <div className="flex-1 overflow-y-auto p-3 space-y-2">
+              <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
+                {cart.length===0&&<div className="text-center text-zinc-600 py-8 text-xs font-bold">Sepete ürün ekleyin. Eklenen ürünlerin birim fiyatını ve adedini doğrudan buradan değiştirebilirsiniz.</div>}
                 {cart.map((item:any)=>(
-                  <div key={item.id} className="bg-zinc-950 p-3 rounded-2xl border border-zinc-800 flex justify-between items-center">
-                    <div className="flex-1 min-w-0"><div className="text-sm font-bold text-zinc-300 truncate">{item.name}</div><div className="text-emerald-500 font-black text-sm">₺{((item.grossPrice||0)*item.qty).toFixed(2)}</div></div>
-                    <div className="flex items-center gap-2 bg-zinc-900 p-1.5 rounded-xl border border-zinc-800 mx-2">
-                      <button onClick={()=>setCart(cart.map((i:any)=>i.id===item.id?{...i,qty:Math.max(1,i.qty-1)}:i))} className="text-zinc-500 hover:text-emerald-500"><MinusCircle size={19}/></button>
-                      <span className="w-5 text-center font-black text-sm">{item.qty}</span>
-                      <button onClick={()=>setCart(cart.map((i:any)=>i.id===item.id?{...i,qty:i.qty+1}:i))} className="text-zinc-500 hover:text-emerald-500"><PlusCircle size={19}/></button>
+                  <div key={item.id} className="bg-zinc-950 p-3 rounded-2xl border border-zinc-800 space-y-2">
+                    <div className="flex justify-between items-start gap-2">
+                      <input
+                        type="text"
+                        value={item.name||''}
+                        onChange={e=>setCart(cart.map((i:any)=>i.id===item.id?{...i,name:e.target.value}:i))}
+                        className="text-sm font-bold text-zinc-200 bg-transparent border-b border-transparent focus:border-emerald-500 outline-none flex-1 min-w-0 truncate"
+                        title="Ürün adını düzenle"
+                      />
+                      <span className="text-emerald-400 font-black text-sm shrink-0">₺{((Number(item.grossPrice)||0)*(Number(item.qty)||0)).toFixed(2)}</span>
+                      <button onClick={()=>setCart(cart.filter((i:any)=>i.id!==item.id))} className="text-red-900 hover:text-red-500 p-0.5 shrink-0"><Trash2 size={14}/></button>
                     </div>
-                    <button onClick={()=>setCart(cart.filter((i:any)=>i.id!==item.id))} className="text-red-900 hover:text-red-500"><Trash2 size={14}/></button>
+                    <div className="flex items-center justify-between gap-2 pt-1 border-t border-zinc-900">
+                      <div className="flex items-center gap-1.5 bg-zinc-900 px-2.5 py-1 rounded-xl border border-zinc-800 focus-within:border-emerald-500">
+                        <span className="text-[10px] font-bold text-zinc-500 uppercase">Fiyat ₺</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={item.grossPrice??''}
+                          onChange={e=>setCart(cart.map((i:any)=>i.id===item.id?{...i,grossPrice:e.target.value===''?'':parseFloat(e.target.value)}:i))}
+                          className="w-20 bg-transparent text-emerald-400 font-black text-sm outline-none text-right"
+                          placeholder="0.00"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1.5 bg-zinc-900 p-1 rounded-xl border border-zinc-800 focus-within:border-emerald-500">
+                        <button type="button" onClick={()=>setCart(cart.map((i:any)=>i.id===item.id?{...i,qty:Math.max(1,(Number(i.qty)||1)-1)}:i))} className="text-zinc-500 hover:text-emerald-500 p-0.5"><MinusCircle size={18}/></button>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={item.qty??''}
+                          onChange={e=>{
+                            const val=e.target.value;
+                            setCart(cart.map((i:any)=>i.id===item.id?{...i,qty:val===''?'':Math.max(0,parseFloat(val))}:i));
+                          }}
+                          onBlur={e=>{
+                            const num=parseFloat(e.target.value);
+                            if(!num||num<=0)setCart(cart.map((i:any)=>i.id===item.id?{...i,qty:1}:i));
+                          }}
+                          className="w-12 bg-zinc-950 border border-zinc-800 rounded-lg py-0.5 text-center font-black text-sm text-white outline-none focus:border-emerald-500"
+                        />
+                        <button type="button" onClick={()=>setCart(cart.map((i:any)=>i.id===item.id?{...i,qty:(Number(i.qty)||0)+1}:i))} className="text-zinc-500 hover:text-emerald-500 p-0.5"><PlusCircle size={18}/></button>
+                      </div>
+                    </div>
                   </div>
                 ))}
+                <button
+                  type="button"
+                  onClick={()=>setCart(prev=>[...prev,{id:'MAN-'+Date.now(),name:'Muhtelif Ürün',grossPrice:0,costPrice:0,taxRate:20,qty:1}])}
+                  className="w-full py-2 rounded-xl border border-dashed border-zinc-800 hover:border-emerald-500/50 text-zinc-500 hover:text-emerald-400 text-xs font-bold flex items-center justify-center gap-1.5 transition-all"
+                >
+                  <Plus size={13}/> Serbest Fiyatlı Satır Ekle
+                </button>
               </div>
               <div className="p-4 bg-zinc-950 border-t border-zinc-800">
-                <div className="flex items-center justify-between mb-3 bg-zinc-900 p-2.5 rounded-xl border border-zinc-800">
-                  <div className="flex items-center gap-2 text-zinc-400 font-bold text-sm"><Percent size={13}/> İskonto</div>
-                  <div className="flex items-center gap-1"><span className="text-zinc-500 text-sm">%</span><input type="number" min="0" max="100" value={discountPct} onChange={e=>setDiscountPct(e.target.value)} placeholder="0" className="w-14 bg-zinc-950 border border-zinc-700 rounded-lg p-1.5 text-center text-white outline-none text-sm font-bold"/></div>
+                <div className="flex items-center justify-between gap-2 mb-3 bg-zinc-900 p-2.5 rounded-xl border border-zinc-800">
+                  <div className="flex items-center gap-1.5 text-zinc-400 font-bold text-xs shrink-0"><Percent size={13}/> İskonto</div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-700 focus-within:border-emerald-500 rounded-lg px-2 py-1">
+                      <span className="text-zinc-500 text-xs font-bold">%</span>
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.1"
+                        value={discountPct}
+                        onChange={e=>{
+                          const v=e.target.value;
+                          setDiscountPct(v);
+                          const p=parseFloat(v);
+                          if(!v||isNaN(p))setDiscountAmtInput('');
+                          else setDiscountAmtInput(((rawTotal*Math.min(100,Math.max(0,p)))/100).toFixed(2));
+                        }}
+                        placeholder="0"
+                        className="w-12 bg-transparent text-center text-white outline-none text-xs font-black"
+                      />
+                    </div>
+                    <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-700 focus-within:border-emerald-500 rounded-lg px-2 py-1">
+                      <span className="text-emerald-500 text-xs font-bold">₺</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={discountAmtInput}
+                        onChange={e=>{
+                          const v=e.target.value;
+                          setDiscountAmtInput(v);
+                          const a=parseFloat(v);
+                          if(!v||isNaN(a)||rawTotal<=0)setDiscountPct('');
+                          else setDiscountPct(((Math.min(rawTotal,Math.max(0,a))/rawTotal)*100).toFixed(1));
+                        }}
+                        placeholder="0.00"
+                        className="w-16 bg-transparent text-center text-emerald-400 outline-none text-xs font-black"
+                      />
+                    </div>
+                  </div>
                 </div>
                 <div className="flex justify-between text-zinc-500 text-sm font-bold mb-1"><span>Ara Toplam:</span><span>₺{rawTotal.toFixed(2)}</span></div>
                 {discountAmount>0&&<div className="flex justify-between text-emerald-500 text-sm font-bold mb-1 border-b border-zinc-800 pb-1"><span>İndirim:</span><span>-₺{discountAmount.toFixed(2)}</span></div>}
@@ -1638,32 +1809,107 @@ export default function App(){
                   </div>
                 )}
               </div>
-              <div className="flex-1 overflow-y-auto p-3 space-y-2">
+              <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
                 {quoteDraft.length===0&&<p className="text-zinc-600 text-center py-8 text-sm font-bold">Ürün eklemek için yukarıdan arama yapın.</p>}
                 {quoteDraft.map((item:any)=>(
-                  <div key={item.id} className="bg-zinc-950 p-3 rounded-2xl border border-zinc-800 flex justify-between items-center">
-                    <div className="flex-1 min-w-0"><div className="text-sm font-bold text-zinc-300 truncate">{item.name}</div><div className="text-purple-400 font-black text-sm">₺{((item.grossPrice||0)*item.qty).toFixed(2)}</div></div>
-                    <div className="flex items-center gap-2 bg-zinc-900 p-1.5 rounded-xl border border-zinc-800 mx-2">
-                      <button onClick={()=>setQuoteDraft(quoteDraft.map((i:any)=>i.id===item.id?{...i,qty:Math.max(1,i.qty-1)}:i))} className="text-zinc-500 hover:text-purple-400"><MinusCircle size={17}/></button>
-                      <span className="w-5 text-center font-black text-sm">{item.qty}</span>
-                      <button onClick={()=>setQuoteDraft(quoteDraft.map((i:any)=>i.id===item.id?{...i,qty:i.qty+1}:i))} className="text-zinc-500 hover:text-purple-400"><PlusCircle size={17}/></button>
+                  <div key={item.id} className="bg-zinc-950 p-3 rounded-2xl border border-zinc-800 space-y-2">
+                    <div className="flex justify-between items-start gap-2">
+                      <input
+                        type="text"
+                        value={item.name||''}
+                        onChange={e=>setQuoteDraft(quoteDraft.map((i:any)=>i.id===item.id?{...i,name:e.target.value}:i))}
+                        className="text-sm font-bold text-zinc-200 bg-transparent border-b border-transparent focus:border-purple-500 outline-none flex-1 min-w-0 truncate"
+                      />
+                      <span className="text-purple-400 font-black text-sm shrink-0">₺{((Number(item.grossPrice)||0)*(Number(item.qty)||0)).toFixed(2)}</span>
+                      <button onClick={()=>setQuoteDraft(quoteDraft.filter((i:any)=>i.id!==item.id))} className="text-red-900 hover:text-red-500 p-0.5 shrink-0"><Trash2 size={14}/></button>
                     </div>
-                    <button onClick={()=>setQuoteDraft(quoteDraft.filter((i:any)=>i.id!==item.id))} className="text-red-900 hover:text-red-500"><Trash2 size={14}/></button>
+                    <div className="flex items-center justify-between gap-2 pt-1 border-t border-zinc-900">
+                      <div className="flex items-center gap-1.5 bg-zinc-900 px-2.5 py-1 rounded-xl border border-zinc-800 focus-within:border-purple-500">
+                        <span className="text-[10px] font-bold text-zinc-500 uppercase">Fiyat ₺</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={item.grossPrice??''}
+                          onChange={e=>setQuoteDraft(quoteDraft.map((i:any)=>i.id===item.id?{...i,grossPrice:e.target.value===''?'':parseFloat(e.target.value)}:i))}
+                          className="w-20 bg-transparent text-purple-400 font-black text-sm outline-none text-right"
+                          placeholder="0.00"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1.5 bg-zinc-900 p-1 rounded-xl border border-zinc-800 focus-within:border-purple-500">
+                        <button type="button" onClick={()=>setQuoteDraft(quoteDraft.map((i:any)=>i.id===item.id?{...i,qty:Math.max(1,(Number(i.qty)||1)-1)}:i))} className="text-zinc-500 hover:text-purple-400 p-0.5"><MinusCircle size={17}/></button>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={item.qty??''}
+                          onChange={e=>{
+                            const val=e.target.value;
+                            setQuoteDraft(quoteDraft.map((i:any)=>i.id===item.id?{...i,qty:val===''?'':Math.max(0,parseFloat(val))}:i));
+                          }}
+                          onBlur={e=>{
+                            const num=parseFloat(e.target.value);
+                            if(!num||num<=0)setQuoteDraft(quoteDraft.map((i:any)=>i.id===item.id?{...i,qty:1}:i));
+                          }}
+                          className="w-12 bg-zinc-950 border border-zinc-800 rounded-lg py-0.5 text-center font-black text-sm text-white outline-none focus:border-purple-500"
+                        />
+                        <button type="button" onClick={()=>setQuoteDraft(quoteDraft.map((i:any)=>i.id===item.id?{...i,qty:(Number(i.qty)||0)+1}:i))} className="text-zinc-500 hover:text-purple-400 p-0.5"><PlusCircle size={17}/></button>
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>
-              <div className="p-4 bg-zinc-950 border-t border-zinc-800 space-y-3">
+              <div className="p-4 bg-zinc-950 border-t border-zinc-800 space-y-2.5">
                 <select value={quoteCustomer} onChange={e=>setQuoteCustomer(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 p-2.5 rounded-xl text-white outline-none text-sm"><option value="">-- Müşteri Seç (isteğe bağlı) --</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
-                <div className="flex gap-2">
-                  <div className="flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2.5 flex-1"><Percent size={12} className="text-zinc-500"/><span className="text-zinc-500 text-xs">%</span><input type="number" min="0" max="100" value={quoteDiscount} onChange={e=>setQuoteDiscount(e.target.value)} placeholder="0" className="w-10 bg-transparent text-white outline-none font-bold text-sm"/></div>
-                  <input value={quoteNote} onChange={e=>setQuoteNote(e.target.value)} placeholder="Not..." className="flex-1 bg-zinc-900 border border-zinc-700 text-white px-3 py-2.5 rounded-xl text-sm outline-none"/>
+                <div className="flex items-center justify-between gap-2 bg-zinc-900 border border-zinc-800 rounded-xl p-2">
+                  <span className="text-zinc-400 font-bold text-xs flex items-center gap-1"><Percent size={12}/> İskonto</span>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1">
+                      <span className="text-zinc-500 text-xs font-bold">%</span>
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.1"
+                        value={quoteDiscount}
+                        onChange={e=>{
+                          const v=e.target.value;
+                          setQuoteDiscount(v);
+                          const p=parseFloat(v);
+                          if(!v||isNaN(p))setQuoteDiscountAmtInput('');
+                          else setQuoteDiscountAmtInput(((qRaw*Math.min(100,Math.max(0,p)))/100).toFixed(2));
+                        }}
+                        placeholder="0"
+                        className="w-12 bg-transparent text-white outline-none font-black text-xs text-center"
+                      />
+                    </div>
+                    <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1">
+                      <span className="text-purple-400 text-xs font-bold">₺</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={quoteDiscountAmtInput}
+                        onChange={e=>{
+                          const v=e.target.value;
+                          setQuoteDiscountAmtInput(v);
+                          const a=parseFloat(v);
+                          if(!v||isNaN(a)||qRaw<=0)setQuoteDiscount('');
+                          else setQuoteDiscount(((Math.min(qRaw,Math.max(0,a))/qRaw)*100).toFixed(1));
+                        }}
+                        placeholder="0.00"
+                        className="w-16 bg-transparent text-purple-400 outline-none font-black text-xs text-center"
+                      />
+                    </div>
+                  </div>
                 </div>
+                <input value={quoteNote} onChange={e=>setQuoteNote(e.target.value)} placeholder="Teklif notu..." className="w-full bg-zinc-900 border border-zinc-700 text-white px-3 py-2 rounded-xl text-sm outline-none"/>
                 <div className="flex justify-between items-center">
                   {qDiscountAmt>0&&<span className="text-zinc-500 text-xs">-₺{qDiscountAmt.toFixed(2)}</span>}
                   <span className="text-2xl font-black text-white ml-auto">₺{qTotal.toFixed(2)}</span>
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={()=>{if(quoteDraft.length===0)return;setPrintQuote({id:'QT-'+(Date.now()),items:quoteDraft,subTotal:qRaw,discountAmount:qDiscountAmt,discountPct:qDiscountVal,total:qTotal,customerName:customers.find(c=>c.id===quoteCustomer)?.name||'',date:new Date().toLocaleString('tr-TR'),note:quoteNote,staffName:currentStaff?.name});setTimeout(()=>window.print(),100);}} className="flex-1 bg-zinc-800 hover:bg-zinc-700 py-3 rounded-xl font-bold border border-zinc-700 text-sm flex items-center justify-center gap-1.5 text-zinc-300"><Printer size={14}/> Yazdır</button>
+                  <button onClick={()=>{if(quoteDraft.length===0)return;setPrintSale(null);setMergedPrint(null);setPrintQuote({id:'QT-'+(Date.now()),items:quoteDraft,subTotal:qRaw,discountAmount:qDiscountAmt,discountPct:qDiscountVal,total:qTotal,customerName:customers.find(c=>c.id===quoteCustomer)?.name||'',date:new Date().toLocaleString('tr-TR'),note:quoteNote,staffName:currentStaff?.name});setTimeout(()=>window.print(),100);}} className="flex-1 bg-zinc-800 hover:bg-zinc-700 py-3 rounded-xl font-bold border border-zinc-700 text-sm flex items-center justify-center gap-1.5 text-zinc-300"><Printer size={14}/> Yazdır</button>
                   <button onClick={handleSaveQuote} className="flex-1 bg-purple-600 hover:bg-purple-500 text-white py-3 rounded-xl font-black text-sm flex items-center justify-center gap-1.5"><Save size={14}/> Kaydet</button>
                 </div>
               </div>
@@ -1702,7 +1948,7 @@ export default function App(){
                           <button onClick={()=>handleQuoteToSale(q)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5"><CheckCircle2 size={12}/> Satışa Çevir</button>
                           <button onClick={()=>updateDoc(doc(db,'quotes',q.id),{status:'reddedildi'})} className="bg-zinc-800 hover:bg-red-600 text-zinc-400 hover:text-white px-3 py-2 rounded-xl text-xs font-bold border border-zinc-700 flex items-center gap-1.5"><X size={11}/> Reddet</button>
                         </>}
-                        <button onClick={()=>{setPrintQuote({...q});setTimeout(()=>window.print(),100);}} className="bg-zinc-800 hover:bg-white hover:text-zinc-950 text-zinc-400 px-3 py-2 rounded-xl text-xs font-bold border border-zinc-700 flex items-center gap-1.5"><Printer size={11}/> Yazdır</button>
+                        <button onClick={()=>{setPrintSale(null);setMergedPrint(null);setPrintQuote({...q});setTimeout(()=>window.print(),100);}} className="bg-zinc-800 hover:bg-white hover:text-zinc-950 text-zinc-400 px-3 py-2 rounded-xl text-xs font-bold border border-zinc-700 flex items-center gap-1.5"><Printer size={11}/> Yazdır</button>
                       </div>
                     </div>
                     <div className="border-t border-zinc-800/50 px-5 pb-3">
@@ -2683,82 +2929,159 @@ export default function App(){
             )}
             {settingsTab==='fis'&&(
             <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
-            <div className="w-full lg:w-[355px] max-h-[58vh] lg:max-h-none shrink-0 bg-zinc-900 border-r border-zinc-800 flex flex-col overflow-hidden">
-              <div className="p-4 border-b border-zinc-800 flex items-center justify-between shrink-0"><div><h2 className="text-base font-black flex items-center gap-2"><Palette size={15} className="text-emerald-500"/> Fiş Tasarımı</h2><p className="text-zinc-500 text-xs">Canlı önizleme sağda</p></div><button onClick={()=>setDraftSettings({...DEFAULT_SETTINGS})} className="text-zinc-500 hover:text-white bg-zinc-800 p-1.5 rounded-xl border border-zinc-700"><RotateCcw size={12}/></button></div>
-              <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                <div className="space-y-2"><h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">📏 Kağıt</h3><div className="grid grid-cols-2 gap-2">{(Object.keys(PAPER_LABELS) as PaperSize[]).map(ps=><button key={ps} onClick={()=>upDraft('paperSize',ps)} className={'py-2.5 px-3 rounded-xl text-xs font-bold border transition-all text-left '+(draftSettings.paperSize===ps?'bg-emerald-500 text-zinc-950 border-emerald-500':'bg-zinc-800 text-zinc-400 border-zinc-700')}><div className="font-black">{PAPER_LABELS[ps]}</div></button>)}</div></div>
-<div className="space-y-2.5">
-  <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-1.5"><Building2 size={10}/> Logo</h3>
-  <div>
-    <input type="file" id="logoInput" accept="image/*" style={{display:'none'}} onChange={(e)=>{
-      const file=e.target.files?.[0];
-      if(!file)return;
-      const reader=new FileReader();
-      reader.onload=(ev)=>upDraft('logoBase64',ev.target?.result as string);
-      reader.readAsDataURL(file);
-      e.target.value='';
-    }}/>
-    <button type="button" onClick={()=>document.getElementById('logoInput')?.click()} className="w-full bg-zinc-800 hover:bg-zinc-700 border border-dashed border-zinc-600 text-zinc-400 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
-      🖼 {draftSettings.logoBase64?'Logoyu Değiştir':'Logo Yükle (PNG/JPG)'}
-    </button>
-    {draftSettings.logoBase64&&(
-      <div className="mt-2 space-y-2">
-        <div className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 rounded-xl p-2.5">
-          <img src={draftSettings.logoBase64} alt="logo" style={{width:40,height:'auto',maxHeight:40,objectFit:'contain'}}/>
-          <button type="button" onClick={()=>upDraft('logoBase64',null)} className="ml-auto text-red-400 text-xs font-bold hover:text-red-300">Kaldır</button>
-        </div>
-        <div className="space-y-1">
-          <label className="text-xs font-bold text-zinc-500 uppercase">Logo Genişliği: {draftSettings.logoSize??80}px</label>
-          <input type="range" min={20} max={200} step={5} value={draftSettings.logoSize??80} onChange={e=>upDraft('logoSize',parseInt(e.target.value))} className="w-full accent-emerald-500"/>
-        </div>
-        <div><label className="text-xs font-bold text-zinc-500 uppercase block mb-1.5">Logo Hizalama</label><div className="grid grid-cols-3 gap-1">{(['left','center','right'] as const).map(a=><button key={a} type="button" onClick={()=>upDraft('logoAlign',a)} className={'py-1.5 rounded-lg text-xs font-bold border transition-all '+(draftSettings.logoAlign===a?'bg-emerald-500 text-zinc-950 border-emerald-500':'bg-zinc-800 text-zinc-400 border-zinc-700')}>{a==='left'?'Sol':a==='center'?'Orta':'Sağ'}</button>)}</div></div>
-      </div>
-    )}
-  </div>
-</div>
-<div className="space-y-2.5">
-  <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-1.5"><Building2 size={10}/> Firma</h3>
-  <Field label="Şube Adı" value={draftSettings.companyName} onChange={v=>upDraft('companyName',v)}/>
-  <div className="space-y-1.5">
-    <label className="text-xs font-bold text-zinc-500 uppercase">Firma Adı Boyutu: {draftSettings.companyNameFontSize??36}px</label>
-    <div className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2">
-      <button type="button" onClick={()=>upDraft('companyNameFontSize',Math.max(10,(draftSettings.companyNameFontSize??36)-2))} className="text-zinc-400 hover:text-white font-black text-lg w-6">−</button>
-      <span className="flex-1 text-center font-black text-white">{draftSettings.companyNameFontSize??36}px</span>
-      <button type="button" onClick={()=>upDraft('companyNameFontSize',Math.min(72,(draftSettings.companyNameFontSize??36)+2))} className="text-zinc-400 hover:text-white font-black text-lg w-6">+</button>
-    </div>
-  </div>
-  <div><label className="text-xs font-bold text-zinc-500 uppercase block mb-1.5">Firma Adı Hizalama</label><div className="grid grid-cols-3 gap-1">{(['left','center','right'] as const).map(a=><button key={a} type="button" onClick={()=>upDraft('companyNameAlign',a)} className={'py-1.5 rounded-lg text-xs font-bold border transition-all '+(draftSettings.companyNameAlign===a?'bg-emerald-500 text-zinc-950 border-emerald-500':'bg-zinc-800 text-zinc-400 border-zinc-700')}>{a==='left'?'Sol':a==='center'?'Orta':'Sağ'}</button>)}</div></div>
-  <div className="flex items-center justify-between py-2 border-b border-zinc-800/40">
-    <span className="text-zinc-300 text-xs font-medium">Tek satıra sığdır (uzun isimler)</span>
-    <button type="button" onClick={()=>upDraft('companyNameSingleLine',!draftSettings.companyNameSingleLine)} className={'w-10 h-5 rounded-full relative transition-all '+(draftSettings.companyNameSingleLine?'bg-emerald-500':'bg-zinc-700')}>
-      <span className={'absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all '+(draftSettings.companyNameSingleLine?'left-5':'left-0.5')}/>
-    </button>
-  </div>
-  <Field label="Alt Başlık" value={draftSettings.companySubtitle} onChange={v=>upDraft('companySubtitle',v)}/>
-  <div className="space-y-1.5">
-    <label className="text-xs font-bold text-zinc-500 uppercase">Alt Başlık Boyutu: {draftSettings.subtitleFontSize??11}px</label>
-    <div className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2">
-      <button type="button" onClick={()=>upDraft('subtitleFontSize',Math.max(7,(draftSettings.subtitleFontSize??11)-1))} className="text-zinc-400 hover:text-white font-black text-lg w-6">−</button>
-      <span className="flex-1 text-center font-black text-white">{draftSettings.subtitleFontSize??11}px</span>
-      <button type="button" onClick={()=>upDraft('subtitleFontSize',Math.min(24,(draftSettings.subtitleFontSize??11)+1))} className="text-zinc-400 hover:text-white font-black text-lg w-6">+</button>
-    </div>
-  </div>
-  <div><label className="text-xs font-bold text-zinc-500 uppercase block mb-1.5">Alt Başlık Hizalama</label><div className="grid grid-cols-3 gap-1">{(['left','center','right'] as const).map(a=><button key={a} type="button" onClick={()=>upDraft('subtitleAlign',a)} className={'py-1.5 rounded-lg text-xs font-bold border transition-all '+(draftSettings.subtitleAlign===a?'bg-emerald-500 text-zinc-950 border-emerald-500':'bg-zinc-800 text-zinc-400 border-zinc-700')}>{a==='left'?'Sol':a==='center'?'Orta':'Sağ'}</button>)}</div></div>
-  <Field label="Adres" icon={<MapPin size={9}/>} value={draftSettings.address} onChange={v=>upDraft('address',v)} placeholder="Cad. No..."/>
-  <Field label="Telefon" icon={<Phone size={9}/>} value={draftSettings.phone} onChange={v=>upDraft('phone',v)}/>
-  <Field label="Vergi No" icon={<Hash size={9}/>} value={draftSettings.taxNo} onChange={v=>upDraft('taxNo',v)}/>
-</div>                <div className="space-y-2.5"><h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-1.5"><AlignLeft size={10}/> Alt Yazı</h3><Field label="1. Satır" value={draftSettings.footerLine1} onChange={v=>upDraft('footerLine1',v)}/><Field label="2. Satır" value={draftSettings.footerLine2} onChange={v=>upDraft('footerLine2',v)}/></div>
-                <div><h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest mb-2 flex items-center gap-1.5"><Eye size={10}/> Göster/Gizle</h3><Toggle label="Müşteri Vergi No" value={draftSettings.showTaxNo} onChange={v=>upDraft('showTaxNo',v)}/><Toggle label="Firma Adresi" value={draftSettings.showAddress} onChange={v=>upDraft('showAddress',v)}/><Toggle label="Firma Telefonu" value={draftSettings.showPhone} onChange={v=>upDraft('showPhone',v)}/><Toggle label="Ürün KDV" value={draftSettings.showItemTax} onChange={v=>upDraft('showItemTax',v)}/></div>
-                <div className="space-y-3"><h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Görünüm</h3><div><label className="text-xs font-bold text-zinc-500 uppercase block mb-1.5">Kenarlık</label><div className="grid grid-cols-3 gap-2">{(['thick','thin','none'] as const).map(b=><button key={b} onClick={()=>upDraft('borderStyle',b)} className={'py-2 rounded-xl text-xs font-bold border transition-all '+(draftSettings.borderStyle===b?'bg-emerald-500 text-zinc-950 border-emerald-500':'bg-zinc-800 text-zinc-400 border-zinc-700')}>{b==='thick'?'Kalın':b==='thin'?'İnce':'Yok'}</button>)}</div></div><div><label className="text-xs font-bold text-zinc-500 uppercase block mb-1.5">Yazı</label><div className="grid grid-cols-3 gap-2">{(['small','normal','large'] as const).map(f=><button key={f} onClick={()=>upDraft('fontSize',f)} className={'py-2 rounded-xl text-xs font-bold border transition-all '+(draftSettings.fontSize===f?'bg-emerald-500 text-zinc-950 border-emerald-500':'bg-zinc-800 text-zinc-400 border-zinc-700')}>{f==='small'?'Küçük':f==='normal'?'Normal':'Büyük'}</button>)}</div></div></div>
+            <div className="w-full lg:w-[410px] max-h-[60vh] lg:max-h-none shrink-0 bg-zinc-900 border-r border-zinc-800 flex flex-col overflow-hidden">
+              <div className="p-4 border-b border-zinc-800 flex items-center justify-between shrink-0">
+                <div>
+                  <h2 className="text-base font-black flex items-center gap-2"><Palette size={15} className="text-emerald-500"/> Fiş Tasarımı & Kenar Boşlukları</h2>
+                  <p className="text-zinc-500 text-xs">Tüm değişiklikler sağda anlık görünür</p>
+                </div>
+                <button type="button" onClick={()=>{setDraftSettings({...DEFAULT_SETTINGS});saveSettingsLS(DEFAULT_SETTINGS);setReceiptSettings({...DEFAULT_SETTINGS});}} className="text-zinc-400 hover:text-white bg-zinc-800 px-2.5 py-1.5 rounded-xl border border-zinc-700 text-xs font-bold flex items-center gap-1" title="80mm varsayılan ayarlara sıfırla"><RotateCcw size={12}/> Sıfırla</button>
               </div>
-              <div className="p-3 border-t border-zinc-800 shrink-0 space-y-2">
-                <button onClick={saveRSettings} className={'w-full py-3 rounded-2xl font-black flex items-center justify-center gap-2 text-sm '+(settingsSaved?'bg-emerald-400 text-zinc-950':'bg-emerald-500 text-zinc-950 hover:bg-emerald-400 shadow-lg shadow-emerald-500/20')}>{settingsSaved?<><CheckCircle size={15}/> Kaydedildi!</>:<><Save size={15}/> Ayarları Kaydet</>}</button>
-                <button onClick={()=>{setPrintSale(demoSale);setPrintQuote(null);setMergedPrint(null);setTimeout(()=>window.print(),100);}} className="w-full py-2.5 rounded-2xl font-bold flex items-center justify-center gap-2 bg-zinc-800 text-zinc-300 hover:bg-zinc-700 border border-zinc-700 text-sm"><Printer size={12}/> Test Fişi</button>
+              <div className="flex-1 overflow-y-auto p-4 space-y-5">
+                {/* 1. KAĞIT & KENAR BOŞLUKLARI */}
+                <div className="bg-zinc-950/60 border border-zinc-800 rounded-2xl p-3.5 space-y-3">
+                  <h3 className="text-xs font-black text-emerald-400 uppercase tracking-widest">📏 Kağıt Boyutu & Kenar Boşlukları</h3>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(Object.keys(PAPER_LABELS) as PaperSize[]).map(ps=>(
+                      <button key={ps} type="button" onClick={()=>{upDraft('paperSize',ps);upDraft('customWidthPx',PAPER_WIDTHS[ps]);}} className={'py-2 px-3 rounded-xl text-xs font-bold border transition-all text-left '+(draftSettings.paperSize===ps?'bg-emerald-500 text-zinc-950 border-emerald-500':'bg-zinc-900 text-zinc-400 border-zinc-800')}>
+                        <div className="font-black">{PAPER_LABELS[ps]}</div>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="space-y-1 pt-1">
+                    <div className="flex justify-between text-xs font-bold"><span className="text-zinc-400">Yazdırma Genişliği (px)</span><span className="text-emerald-400 font-black">{draftSettings.customWidthPx||PAPER_WIDTHS[draftSettings.paperSize]}px</span></div>
+                    <input type="range" min={180} max={680} step={5} value={draftSettings.customWidthPx||PAPER_WIDTHS[draftSettings.paperSize]} onChange={e=>upDraft('customWidthPx',parseInt(e.target.value))} className="w-full accent-emerald-500"/>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2.5 pt-1">
+                    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-2">
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase block mb-1">Üst Boşluk (px)</label>
+                      <input type="number" min={0} max={80} value={draftSettings.marginTop??2} onChange={e=>upDraft('marginTop',Math.max(0,parseInt(e.target.value)||0))} className="w-full bg-zinc-950 border border-zinc-700 rounded-lg p-1.5 text-center font-black text-white text-xs outline-none focus:border-emerald-500"/>
+                    </div>
+                    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-2">
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase block mb-1">Alt Boşluk (px)</label>
+                      <input type="number" min={0} max={80} value={draftSettings.marginBottom??2} onChange={e=>upDraft('marginBottom',Math.max(0,parseInt(e.target.value)||0))} className="w-full bg-zinc-950 border border-zinc-700 rounded-lg p-1.5 text-center font-black text-white text-xs outline-none focus:border-emerald-500"/>
+                    </div>
+                    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-2">
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase block mb-1">Sol Boşluk (px)</label>
+                      <input type="number" min={0} max={60} value={draftSettings.marginLeft??4} onChange={e=>upDraft('marginLeft',Math.max(0,parseInt(e.target.value)||0))} className="w-full bg-zinc-950 border border-zinc-700 rounded-lg p-1.5 text-center font-black text-white text-xs outline-none focus:border-emerald-500"/>
+                    </div>
+                    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-2">
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase block mb-1">Sağ Boşluk (px)</label>
+                      <input type="number" min={0} max={60} value={draftSettings.marginRight??4} onChange={e=>upDraft('marginRight',Math.max(0,parseInt(e.target.value)||0))} className="w-full bg-zinc-950 border border-zinc-700 rounded-lg p-1.5 text-center font-black text-white text-xs outline-none focus:border-emerald-500"/>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 pt-1">
+                    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-2">
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase block mb-1">Satır Arası</label>
+                      <input type="number" min={0} max={16} value={draftSettings.rowSpacing??2} onChange={e=>upDraft('rowSpacing',Math.max(0,parseInt(e.target.value)||0))} className="w-full bg-zinc-950 border border-zinc-700 rounded-lg p-1.5 text-center font-black text-white text-xs outline-none focus:border-emerald-500"/>
+                    </div>
+                    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-2">
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase block mb-1">Ürün Yazı(px)</label>
+                      <input type="number" min={8} max={20} value={draftSettings.tableFontSize??11} onChange={e=>upDraft('tableFontSize',Math.max(8,parseInt(e.target.value)||11))} className="w-full bg-zinc-950 border border-zinc-700 rounded-lg p-1.5 text-center font-black text-white text-xs outline-none focus:border-emerald-500"/>
+                    </div>
+                    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-2">
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase block mb-1">Toplam(px)</label>
+                      <input type="number" min={10} max={28} value={draftSettings.totalFontSize??14} onChange={e=>upDraft('totalFontSize',Math.max(10,parseInt(e.target.value)||14))} className="w-full bg-zinc-950 border border-zinc-700 rounded-lg p-1.5 text-center font-black text-white text-xs outline-none focus:border-emerald-500"/>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. GÖSTER / GİZLE SEÇENEKLERİ */}
+                <div className="bg-zinc-950/60 border border-zinc-800 rounded-2xl p-3.5">
+                  <h3 className="text-xs font-black text-emerald-400 uppercase tracking-widest mb-2 flex items-center gap-1.5"><Eye size={12}/> Fiş Üzerinde Göster / Gizle</h3>
+                  <Toggle label="Tarih ve Saat" value={draftSettings.showDate??true} onChange={v=>upDraft('showDate',v)}/>
+                  <Toggle label="Kasiyer Adı" value={draftSettings.showStaff??true} onChange={v=>upDraft('showStaff',v)}/>
+                  <Toggle label="Müşteri Satırı" value={draftSettings.showCustomer??true} onChange={v=>upDraft('showCustomer',v)}/>
+                  <Toggle label="Müşteri Vergi/TC No" value={draftSettings.showTaxNo} onChange={v=>upDraft('showTaxNo',v)}/>
+                  <Toggle label="Birim Fiyat Sütunu" value={draftSettings.showUnitPrice??true} onChange={v=>upDraft('showUnitPrice',v)}/>
+                  <Toggle label="Ürün KDV Sütunu" value={draftSettings.showItemTax} onChange={v=>upDraft('showItemTax',v)}/>
+                  <Toggle label="Ara Toplam & İskonto Satırı" value={draftSettings.showDiscount??true} onChange={v=>upDraft('showDiscount',v)}/>
+                  <Toggle label="Firma Adresi" value={draftSettings.showAddress} onChange={v=>upDraft('showAddress',v)}/>
+                  <Toggle label="Firma Telefonu" value={draftSettings.showPhone} onChange={v=>upDraft('showPhone',v)}/>
+                  <Toggle label="Alt Bilgi (Teşekkür Yazısı)" value={draftSettings.showFooter??true} onChange={v=>upDraft('showFooter',v)}/>
+                </div>
+
+                {/* 3. FİRMA VE BAŞLIK AYARLARI */}
+                <div className="bg-zinc-950/60 border border-zinc-800 rounded-2xl p-3.5 space-y-2.5">
+                  <h3 className="text-xs font-black text-emerald-400 uppercase tracking-widest flex items-center gap-1.5"><Building2 size={12}/> Firma & Başlık</h3>
+                  <Field label="Şube / Firma Adı" value={draftSettings.companyName} onChange={v=>upDraft('companyName',v)}/>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-zinc-500 uppercase">Firma Adı Boyutu: {draftSettings.companyNameFontSize??18}px</label>
+                    <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-1.5">
+                      <button type="button" onClick={()=>upDraft('companyNameFontSize',Math.max(10,(draftSettings.companyNameFontSize??18)-1))} className="text-zinc-400 hover:text-white font-black text-lg w-6">−</button>
+                      <span className="flex-1 text-center font-black text-white text-sm">{draftSettings.companyNameFontSize??18}px</span>
+                      <button type="button" onClick={()=>upDraft('companyNameFontSize',Math.min(48,(draftSettings.companyNameFontSize??18)+1))} className="text-zinc-400 hover:text-white font-black text-lg w-6">+</button>
+                    </div>
+                  </div>
+                  <div><label className="text-xs font-bold text-zinc-500 uppercase block mb-1.5">Firma Adı Hizalama</label><div className="grid grid-cols-3 gap-1">{(['left','center','right'] as const).map(a=><button key={a} type="button" onClick={()=>upDraft('companyNameAlign',a)} className={'py-1.5 rounded-lg text-xs font-bold border transition-all '+(draftSettings.companyNameAlign===a?'bg-emerald-500 text-zinc-950 border-emerald-500':'bg-zinc-800 text-zinc-400 border-zinc-700')}>{a==='left'?'Sol':a==='center'?'Orta':'Sağ'}</button>)}</div></div>
+                  <Toggle label="Tek satıra sığdır" value={draftSettings.companyNameSingleLine} onChange={v=>upDraft('companyNameSingleLine',v)}/>
+                  <Field label="Alt Başlık" value={draftSettings.companySubtitle} onChange={v=>upDraft('companySubtitle',v)}/>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-zinc-500 uppercase">Alt Başlık Boyutu: {draftSettings.subtitleFontSize??9}px</label>
+                    <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-1.5">
+                      <button type="button" onClick={()=>upDraft('subtitleFontSize',Math.max(7,(draftSettings.subtitleFontSize??9)-1))} className="text-zinc-400 hover:text-white font-black text-lg w-6">−</button>
+                      <span className="flex-1 text-center font-black text-white text-sm">{draftSettings.subtitleFontSize??9}px</span>
+                      <button type="button" onClick={()=>upDraft('subtitleFontSize',Math.min(24,(draftSettings.subtitleFontSize??9)+1))} className="text-zinc-400 hover:text-white font-black text-lg w-6">+</button>
+                    </div>
+                  </div>
+                  <div><label className="text-xs font-bold text-zinc-500 uppercase block mb-1.5">Alt Başlık Hizalama</label><div className="grid grid-cols-3 gap-1">{(['left','center','right'] as const).map(a=><button key={a} type="button" onClick={()=>upDraft('subtitleAlign',a)} className={'py-1.5 rounded-lg text-xs font-bold border transition-all '+(draftSettings.subtitleAlign===a?'bg-emerald-500 text-zinc-950 border-emerald-500':'bg-zinc-800 text-zinc-400 border-zinc-700')}>{a==='left'?'Sol':a==='center'?'Orta':'Sağ'}</button>)}</div></div>
+                  <Field label="Adres" icon={<MapPin size={9}/>} value={draftSettings.address} onChange={v=>upDraft('address',v)} placeholder="Cad. No..."/>
+                  <Field label="Telefon" icon={<Phone size={9}/>} value={draftSettings.phone} onChange={v=>upDraft('phone',v)}/>
+                  <Field label="Vergi No" icon={<Hash size={9}/>} value={draftSettings.taxNo} onChange={v=>upDraft('taxNo',v)}/>
+                </div>
+
+                {/* 4. LOGO & ALT YAZI & ÇERÇEVE */}
+                <div className="bg-zinc-950/60 border border-zinc-800 rounded-2xl p-3.5 space-y-3">
+                  <h3 className="text-xs font-black text-emerald-400 uppercase tracking-widest">🖼 Logo, Alt Yazı & Çerçeve</h3>
+                  <input type="file" id="logoInput" accept="image/*" style={{display:'none'}} onChange={(e)=>{
+                    const file=e.target.files?.[0];
+                    if(!file)return;
+                    const reader=new FileReader();
+                    reader.onload=(ev)=>upDraft('logoBase64',ev.target?.result as string);
+                    reader.readAsDataURL(file);
+                    e.target.value='';
+                  }}/>
+                  <button type="button" onClick={()=>document.getElementById('logoInput')?.click()} className="w-full bg-zinc-800 hover:bg-zinc-700 border border-dashed border-zinc-600 text-zinc-300 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
+                    🖼 {draftSettings.logoBase64?'Logoyu Değiştir':'Logo Yükle (PNG/JPG)'}
+                  </button>
+                  {draftSettings.logoBase64&&(
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-xl p-2">
+                        <img src={draftSettings.logoBase64} alt="logo" style={{width:36,height:'auto',maxHeight:36,objectFit:'contain'}}/>
+                        <button type="button" onClick={()=>upDraft('logoBase64',null)} className="ml-auto text-red-400 text-xs font-bold hover:text-red-300">Kaldır</button>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-zinc-500 uppercase">Logo Genişliği: {draftSettings.logoSize??55}px</label>
+                        <input type="range" min={20} max={200} step={5} value={draftSettings.logoSize??55} onChange={e=>upDraft('logoSize',parseInt(e.target.value))} className="w-full accent-emerald-500"/>
+                      </div>
+                      <div className="grid grid-cols-3 gap-1">{(['left','center','right'] as const).map(a=><button key={a} type="button" onClick={()=>upDraft('logoAlign',a)} className={'py-1.5 rounded-lg text-xs font-bold border transition-all '+(draftSettings.logoAlign===a?'bg-emerald-500 text-zinc-950 border-emerald-500':'bg-zinc-800 text-zinc-400 border-zinc-700')}>{a==='left'?'Sol':a==='center'?'Orta':'Sağ'}</button>)}</div>
+                    </div>
+                  )}
+                  <Field label="Alt Yazı 1. Satır" value={draftSettings.footerLine1} onChange={v=>upDraft('footerLine1',v)}/>
+                  <Field label="Alt Yazı 2. Satır" value={draftSettings.footerLine2} onChange={v=>upDraft('footerLine2',v)}/>
+                  <div>
+                    <label className="text-xs font-bold text-zinc-500 uppercase block mb-1.5">Dış Çerçeve</label>
+                    <div className="grid grid-cols-3 gap-2">{(['thick','thin','none'] as const).map(b=><button key={b} type="button" onClick={()=>upDraft('borderStyle',b)} className={'py-2 rounded-xl text-xs font-bold border transition-all '+(draftSettings.borderStyle===b?'bg-emerald-500 text-zinc-950 border-emerald-500':'bg-zinc-800 text-zinc-400 border-zinc-700')}>{b==='thick'?'Kalın':b==='thin'?'İnce':'Yok'}</button>)}</div>
+                  </div>
+                </div>
+              </div>
+              <div className="p-3 border-t border-zinc-800 shrink-0 space-y-2 bg-zinc-900">
+                <button type="button" onClick={saveRSettings} className={'w-full py-3 rounded-2xl font-black flex items-center justify-center gap-2 text-sm '+(settingsSaved?'bg-emerald-400 text-zinc-950':'bg-emerald-500 text-zinc-950 hover:bg-emerald-400 shadow-lg shadow-emerald-500/20')}>{settingsSaved?<><CheckCircle size={15}/> Kaydedildi!</>:<><Save size={15}/> Ayarları Kaydet</>}</button>
+                <button type="button" onClick={()=>{setReceiptSettings({...draftSettings});saveSettingsLS(draftSettings);setPrintSale(demoSale);setPrintQuote(null);setMergedPrint(null);setTimeout(()=>window.print(),100);}} className="w-full py-2.5 rounded-2xl font-bold flex items-center justify-center gap-2 bg-zinc-800 text-zinc-300 hover:bg-zinc-700 border border-zinc-700 text-sm"><Printer size={12}/> Kaydet & Test Fişi Yazdır</button>
               </div>
             </div>
             <div className="flex-1 overflow-y-auto bg-zinc-950 p-7">
-              <div className="flex items-center gap-2 mb-4"><Eye size={12} className="text-emerald-500"/><span className="text-zinc-400 font-bold text-sm uppercase">Önizleme</span><span className="bg-zinc-800 text-zinc-400 text-xs font-bold px-2.5 py-1 rounded-lg border border-zinc-700 ml-2">{PAPER_LABELS[draftSettings.paperSize]}</span></div>
-              <div className="bg-zinc-800/30 rounded-2xl p-5 flex justify-center"><div className="bg-white rounded-xl shadow-2xl shadow-black/60 overflow-hidden" style={{width:Math.min(PAPER_WIDTHS[draftSettings.paperSize],580)+'px'}}><ReceiptTemplate sale={demoSale} settings={draftSettings} preview={true}/></div></div>
+              <div className="flex items-center gap-2 mb-4 flex-wrap">
+                <Eye size={14} className="text-emerald-500"/>
+                <span className="text-zinc-300 font-black text-sm uppercase">Canlı Fiş Önizlemesi</span>
+                <span className="bg-zinc-800 text-emerald-400 text-xs font-bold px-2.5 py-1 rounded-lg border border-zinc-700">{PAPER_LABELS[draftSettings.paperSize]} ({draftSettings.customWidthPx||PAPER_WIDTHS[draftSettings.paperSize]}px)</span>
+                <span className="bg-zinc-900 text-zinc-500 text-xs font-bold px-2.5 py-1 rounded-lg border border-zinc-800">Boşluk: Üst {draftSettings.marginTop??2} / Alt {draftSettings.marginBottom??2} / Sol {draftSettings.marginLeft??4} / Sağ {draftSettings.marginRight??4}px</span>
+              </div>
+              <div className="bg-zinc-900/60 border border-zinc-800 rounded-3xl p-6 flex justify-center items-start min-h-[420px]">
+                <div className="bg-white shadow-2xl shadow-black/80 overflow-hidden transition-all" style={{width:Math.min(draftSettings.customWidthPx||PAPER_WIDTHS[draftSettings.paperSize],680)+'px'}}>
+                  <ReceiptTemplate sale={demoSale} settings={draftSettings} preview={true}/>
+                </div>
+              </div>
             </div>
             </div>
             )}
@@ -2839,10 +3162,14 @@ export default function App(){
             <form onSubmit={handleUpdateOrder} className="p-6 space-y-4">
               <div className="space-y-3 max-h-60 overflow-y-auto">
                 {editOrderCart.map((item:any,idx:number)=>(
-                  <div key={idx} className="flex items-center gap-3 bg-zinc-950 p-3 rounded-xl border border-zinc-800">
-                    <span className="font-bold text-zinc-300 flex-1 text-sm">{item.name}</span>
-                    <div className="flex items-center gap-2"><button type="button" onClick={()=>setEditOrderCart(editOrderCart.map((i:any,ii:number)=>ii===idx?{...i,qty:Math.max(1,i.qty-1)}:i))} className="text-zinc-500 hover:text-emerald-500"><MinusCircle size={17}/></button><span className="w-6 text-center font-black text-sm">{item.qty}</span><button type="button" onClick={()=>setEditOrderCart(editOrderCart.map((i:any,ii:number)=>ii===idx?{...i,qty:i.qty+1}:i))} className="text-zinc-500 hover:text-emerald-500"><PlusCircle size={17}/></button></div>
-                    <span className="text-emerald-400 font-black text-sm w-20 text-right">₺{((item.grossPrice||0)*item.qty).toFixed(2)}</span>
+                  <div key={idx} className="flex items-center gap-2 bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+                    <span className="font-bold text-zinc-300 flex-1 text-sm truncate">{item.name}</span>
+                    <div className="flex items-center gap-1 bg-zinc-900 px-2 py-1 rounded-lg border border-zinc-800">
+                      <span className="text-[10px] text-zinc-500 font-bold">₺</span>
+                      <input type="number" step="0.01" min="0" value={item.grossPrice??''} onChange={e=>setEditOrderCart(editOrderCart.map((i:any,ii:number)=>ii===idx?{...i,grossPrice:e.target.value===''?'':parseFloat(e.target.value)}:i))} className="w-16 bg-transparent text-emerald-400 font-black text-xs outline-none text-right"/>
+                    </div>
+                    <div className="flex items-center gap-1"><button type="button" onClick={()=>setEditOrderCart(editOrderCart.map((i:any,ii:number)=>ii===idx?{...i,qty:Math.max(1,(Number(i.qty)||1)-1)}:i))} className="text-zinc-500 hover:text-emerald-500"><MinusCircle size={16}/></button><input type="number" min="1" value={item.qty??1} onChange={e=>setEditOrderCart(editOrderCart.map((i:any,ii:number)=>ii===idx?{...i,qty:Math.max(1,parseInt(e.target.value)||1)}:i))} className="w-10 bg-zinc-900 border border-zinc-800 rounded text-center font-black text-xs text-white py-0.5 outline-none"/><button type="button" onClick={()=>setEditOrderCart(editOrderCart.map((i:any,ii:number)=>ii===idx?{...i,qty:(Number(i.qty)||1)+1}:i))} className="text-zinc-500 hover:text-emerald-500"><PlusCircle size={16}/></button></div>
+                    <span className="text-emerald-400 font-black text-xs w-16 text-right">₺{((Number(item.grossPrice)||0)*(Number(item.qty)||1)).toFixed(2)}</span>
                     <button type="button" onClick={()=>setEditOrderCart(editOrderCart.filter((_:any,ii:number)=>ii!==idx))} className="text-zinc-700 hover:text-red-500"><Trash2 size={13}/></button>
                   </div>
                 ))}
@@ -3212,28 +3539,64 @@ export default function App(){
 
     {/* YAZDIR */}
     <div className="hidden print:block">
-      {printQuote&&!activePrintData?(
-        <div style={{maxWidth:'680px',margin:'0 auto',padding:'28px',background:'white',color:'black',fontFamily:'Arial,sans-serif',fontSize:'1rem',border:'4px solid black',boxSizing:'border-box'}}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',paddingBottom:'14px',marginBottom:'14px',borderBottom:'4px solid black'}}>
-            <div><div style={{fontSize:'2.2rem',fontWeight:900,textTransform:'uppercase',lineHeight:1}}>{receiptSettings.companyName}</div><div style={{fontSize:'0.72rem',fontWeight:700,color:'#666',marginTop:3}}>SATIŞ TEKLİFİ</div></div>
-            <div style={{textAlign:'right',fontSize:'0.72rem'}}><div><strong>TARİH:</strong> {printQuote.date?.split(' ')[0]}</div><div><strong>TEKLİF NO:</strong> #{printQuote.id?.slice(-6).toUpperCase()}</div>{printQuote.staffName&&<div style={{color:'#888'}}><strong>HAZIRLAYAN:</strong> {printQuote.staffName}</div>}</div>
-          </div>
-          {printQuote.customerName&&<div style={{background:'#f9fafb',border:'2px solid #000',borderRadius:6,padding:'14px',marginBottom:14}}><div style={{fontSize:'1.1rem',fontWeight:500,textTransform:'uppercase'}}>SAYIN: {printQuote.customerName}</div></div>}
-          <table style={{width:'100%',borderCollapse:'collapse',marginBottom:20}}>
-            <thead><tr style={{borderBottom:'4px solid black'}}><th style={{textAlign:'left',padding:'8px 0',fontSize:'0.88rem'}}>ÜRÜN</th><th style={{textAlign:'center',padding:'8px 0',fontSize:'0.88rem'}}>ADET</th><th style={{textAlign:'right',padding:'8px 0',fontSize:'0.88rem'}}>BİRİM</th><th style={{textAlign:'right',padding:'8px 0',fontSize:'0.88rem'}}>TOPLAM</th></tr></thead>
-            <tbody>{(printQuote.items||[]).map((item:any,i:number)=><tr key={i} style={{borderBottom:'1px solid #e5e7eb'}}><td style={{padding:'8px 0',fontWeight:700,fontSize:'0.9rem'}}>{item.name}</td><td style={{padding:'8px 0',textAlign:'center',fontWeight:900}}>{item.qty}</td><td style={{padding:'8px 0',textAlign:'right',color:'#555',fontSize:'0.85rem'}}>₺{(item.grossPrice||0).toFixed(2)}</td><td style={{padding:'8px 0',textAlign:'right',fontWeight:900,fontSize:'0.95rem'}}>₺{((item.grossPrice||0)*(item.qty||1)).toFixed(2)}</td></tr>)}</tbody>
-          </table>
-          <div style={{display:'flex',justifyContent:'flex-end'}}>
-            <div style={{width:'260px',borderTop:'4px solid black',paddingTop:10}}>
-              <div style={{display:'flex',justifyContent:'space-between',color:'#555',marginBottom:4,fontSize:'0.85rem',fontWeight:700}}><span>Ara Toplam:</span><span>₺{(printQuote.subTotal||0).toFixed(2)}</span></div>
-              {(printQuote.discountAmount||0)>0&&<div style={{display:'flex',justifyContent:'space-between',color:'#555',marginBottom:6,paddingBottom:6,borderBottom:'1px solid #e5e7eb',fontSize:'0.85rem',fontWeight:700}}><span>İskonto (%{printQuote.discountPct}):</span><span>- ₺{(printQuote.discountAmount||0).toFixed(2)}</span></div>}
-              <div style={{display:'flex',justifyContent:'space-between',fontWeight:900,fontSize:'1.8rem',marginTop:6}}><span>TOPLAM:</span><span>₺{(printQuote.total||0).toFixed(2)}</span></div>
+      <style>{`
+        @media print {
+          @page { margin: 0; size: ${receiptSettings.paperSize==='58mm'?'58mm':receiptSettings.paperSize==='80mm'?'80mm':'auto'} auto; }
+          body { margin: 0; padding: 0; }
+        }
+      `}</style>
+      {printQuote?(
+        <div style={{maxWidth:(receiptSettings.customWidthPx||PAPER_WIDTHS[receiptSettings.paperSize])+'px',width:(receiptSettings.customWidthPx||PAPER_WIDTHS[receiptSettings.paperSize])+'px',margin:'0 auto',paddingTop:(receiptSettings.marginTop??2)+'px',paddingBottom:(receiptSettings.marginBottom??2)+'px',paddingLeft:(receiptSettings.marginLeft??4)+'px',paddingRight:(receiptSettings.marginRight??4)+'px',background:'white',color:'black',fontFamily:"'Arial Narrow', Arial, sans-serif",fontSize:(receiptSettings.tableFontSize??11)+'px',lineHeight:1.15,boxSizing:'border-box'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',paddingBottom:4,marginBottom:4,borderBottom:'1px dashed #000'}}>
+            <div>
+              <div style={{fontSize:'16px',fontWeight:900,textTransform:'uppercase'}}>{receiptSettings.companyName}</div>
+              <div style={{fontSize:'9px',fontWeight:700}}>SATIŞ TEKLİFİ FORMU</div>
+            </div>
+            <div style={{textAlign:'right',fontSize:'10px'}}>
+              <div><strong>{printQuote.date?.split(' ')[0]}</strong></div>
+              <div>Teklif: <strong>#{printQuote.id?.slice(-6).toUpperCase()}</strong></div>
+              {printQuote.staffName&&<div>Hazırlayan: {printQuote.staffName}</div>}
             </div>
           </div>
-          {printQuote.note&&<div style={{marginTop:20,padding:'10px 14px',background:'#f3f4f6',borderRadius:6,fontSize:'0.8rem',color:'#555'}}>Not: {printQuote.note}</div>}
-          <div style={{marginTop:28,textAlign:'center',borderTop:'2px dashed #d1d5db',paddingTop:12,color:'#9ca3af',fontWeight:700,fontSize:'0.72rem'}}>
-            <div>Bu bir ön tekliftir. Fiyatlar geçerlilik tarihine kadar geçerlidir.</div>
-            <div style={{marginTop:2}}>{receiptSettings.companyName}{receiptSettings.phone&&(' - '+receiptSettings.phone)}</div>
+          {printQuote.customerName&&(
+            <div style={{paddingBottom:4,marginBottom:4,borderBottom:'1px dashed #000',fontWeight:900,textTransform:'uppercase'}}>
+              MÜŞTERİ: {printQuote.customerName}
+            </div>
+          )}
+          <table style={{width:'100%',borderCollapse:'collapse',marginBottom:4}}>
+            <thead>
+              <tr style={{borderBottom:'1px dashed #000',fontSize:'10px'}}>
+                <th style={{textAlign:'left',padding:'2px 0'}}>ÜRÜN</th>
+                <th style={{textAlign:'center',padding:'2px'}}>AD</th>
+                <th style={{textAlign:'right',padding:'2px'}}>BİRİM</th>
+                <th style={{textAlign:'right',padding:'2px 0'}}>TUTAR</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(printQuote.items||[]).map((item:any,i:number)=>(
+                <tr key={i} style={{borderBottom:'1px dotted #ccc',fontSize:'11px'}}>
+                  <td style={{padding:'2px 2px 2px 0',fontWeight:700}}>{item.name}</td>
+                  <td style={{padding:'2px',textAlign:'center',fontWeight:900}}>{item.qty}</td>
+                  <td style={{padding:'2px',textAlign:'right'}}>{(item.grossPrice||0).toFixed(2)}</td>
+                  <td style={{padding:'2px 0 2px 2px',textAlign:'right',fontWeight:900}}>{((item.grossPrice||0)*(item.qty||1)).toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{borderTop:'1px dashed #000',paddingTop:3}}>
+            {(printQuote.discountAmount||0)>0&&(
+              <>
+                <div style={{display:'flex',justifyContent:'space-between',fontWeight:700}}><span>Ara Toplam:</span><span>₺{(printQuote.subTotal||0).toFixed(2)}</span></div>
+                <div style={{display:'flex',justifyContent:'space-between',fontWeight:700}}><span>İskonto (%{printQuote.discountPct}):</span><span>-₺{(printQuote.discountAmount||0).toFixed(2)}</span></div>
+              </>
+            )}
+            <div style={{display:'flex',justifyContent:'space-between',fontWeight:900,fontSize:'14px',marginTop:2}}>
+              <span>TEKLİF TOPLAMI:</span><span>₺{(printQuote.total||0).toFixed(2)}</span>
+            </div>
+          </div>
+          {printQuote.note&&<div style={{marginTop:4,fontSize:'10px'}}>Not: {printQuote.note}</div>}
+          <div style={{marginTop:6,textAlign:'center',borderTop:'1px dashed #000',paddingTop:3,fontSize:'9px',fontWeight:700}}>
+            Bu belge bilgi amaçlı ön tekliftir, mali değeri yoktur.
           </div>
         </div>
       ):(
