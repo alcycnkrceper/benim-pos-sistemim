@@ -129,6 +129,7 @@ const Toggle=({label,value,onChange}:{label:string;value:boolean;onChange:(v:boo
 
 const ALL_PERMISSIONS = [
   {key:'pos',group:'Satış',label:'Hızlı Satış (POS)',icon:'🛒'},
+  {key:'sales.history',group:'Satış',label:'Son Fişler & Satış Geçmişi',icon:'🧾'},
   {key:'orders',group:'Satış',label:'Siparişli Satışlar',icon:'📦'},
   {key:'quotes',group:'Satış',label:'Teklifler',icon:'📝'},
   {key:'returns',group:'Satış',label:'İade & Değişim',icon:'🔄'},
@@ -411,6 +412,17 @@ export default function App(){
   const [isVeresiyeOpen,setIsVeresiyeOpen]=useState(false);
   const [printSale,setPrintSale]=useState<any>(null);
   const [mergedPrint,setMergedPrint]=useState<any>(null);
+  // ── Son Fişler & Fiş Düzenleme ────────────────────────────────────────
+  const [saleHistorySearch,setSaleHistorySearch]=useState('');
+  const [saleHistoryMethod,setSaleHistoryMethod]=useState('all');
+  const [saleHistoryDate,setSaleHistoryDate]=useState('');
+  const [editingSale,setEditingSale]=useState<any>(null);
+  const [editSaleCart,setEditSaleCart]=useState<any[]>([]);
+  const [editSaleCustomer,setEditSaleCustomer]=useState('');
+  const [editSaleMethod,setEditSaleMethod]=useState('Nakit');
+  const [editSaleDiscountPct,setEditSaleDiscountPct]=useState('');
+  const [editSaleDiscountAmt,setEditSaleDiscountAmt]=useState('');
+  const [editSaleProductSearch,setEditSaleProductSearch]=useState('');
   // ── Order mode ────────────────────────────────────────────────────────
   const [orderMode,setOrderMode]=useState(false);
   const [orderCustomer,setOrderCustomer]=useState('');
@@ -648,6 +660,7 @@ export default function App(){
     const perms:string[]=currentStaff.permissions||[];
     if(action.startsWith('rapor.'))return perms.includes(action.replace('rapor.','reports.'));
     if(action.startsWith('stock'))return perms.includes(action)||perms.includes('stock');
+    if(action==='sales.history')return perms.includes('sales.history')||perms.includes('pos');
     return perms.includes(action);
   };
   const stockColor=(stock:number)=>{
@@ -769,6 +782,142 @@ export default function App(){
     await logAction('BÖLÜNMÜŞ_SATIŞ','Nakit:₺'+(nakit)+'+Kart:₺'+(kart),finalTotal);
     setLastSale({id:'SPLIT-'+(Date.now()),items:cleanCart,total:finalTotal,method:'Nakit ₺'+(nakit)+' + Kart ₺'+(kart),customerName:ac?ac.name:'Perakende Müşteri',date:new Date().toLocaleString('tr-TR'),staffName:currentStaff?.name});
     setCart([]);setCartCustomer('');setDiscountPct('');setDiscountAmtInput('');setSplitModal(false);setSplitNakit('');setSplitKart('');
+  };
+
+  // ── Fiş Düzenleme & Silme & Yeniden Yazdırma ──────────────────────────
+  const triggerReprint=(sale:any)=>{
+    setPrintQuote(null);
+    setMergedPrint(null);
+    setPrintSale(sale);
+    setTimeout(()=>window.print(),100);
+  };
+  const openEditSale=(sale:any)=>{
+    setEditingSale(sale);
+    setEditSaleCart((sale.items||[]).map((i:any)=>({...i})));
+    const matchedCust=customers.find(c=>c.name===sale.customerName);
+    setEditSaleCustomer(matchedCust?matchedCust.id:'');
+    setEditSaleMethod(sale.method||'Nakit');
+    setEditSaleDiscountPct(sale.discountPct?String(sale.discountPct):'');
+    setEditSaleDiscountAmt(sale.discountAmount?String(sale.discountAmount):'');
+    setEditSaleProductSearch('');
+  };
+  const handleSaveEditedSale=async(andPrint=false)=>{
+    if(!editingSale)return;
+    if(editSaleCart.length===0)return alert('Fişte en az 1 ürün olmalıdır. Fişi tamamen iptal etmek için Sil butonunu kullanın.');
+    if(editSaleMethod==='Veresiye'&&!editSaleCustomer&&(!editingSale.customerName||editingSale.customerName==='Perakende Müşteri')){
+      return alert('Veresiye fiş için müşteri seçmelisiniz!');
+    }
+    const cleanItems=editSaleCart.map((i:any)=>({
+      ...i,
+      name:String(i.name||'Ürün').trim()||'Ürün',
+      qty:Math.max(1,Number(i.qty)||1),
+      grossPrice:Math.max(0,Number(i.grossPrice)||0),
+    }));
+    const rawT=cleanItems.reduce((t:number,i:any)=>t+(i.grossPrice*i.qty),0);
+    const totalCostT=cleanItems.reduce((t:number,i:any)=>{
+      const p=products.find(pr=>pr.id===i.id||pr.name===i.name);
+      const unitCost=Number(i.costPrice??p?.costPrice??0);
+      return t+(unitCost*i.qty);
+    },0);
+    const manualD=parseFloat(editSaleDiscountAmt);
+    const hasManualD=editSaleDiscountAmt.trim()!==''&&!isNaN(manualD);
+    const dAmt=hasManualD?Math.min(rawT,Math.max(0,manualD)):rawT*((parseFloat(editSaleDiscountPct)||0)/100);
+    const dPct=rawT>0?parseFloat(((dAmt/rawT)*100).toFixed(2)):0;
+    const newTotal=Math.max(0,rawT-dAmt);
+
+    // 1. Stok farklarını hesapla ve güncelle (Eski adetleri iade et, yeni adetleri düş)
+    if(editingSale.method!=='Tahsilat'){
+      const stockDelta:Record<string,number>={};
+      (editingSale.items||[]).forEach((oldIt:any)=>{
+        const p=products.find(pr=>pr.id===oldIt.id||pr.name===oldIt.name);
+        if(p)stockDelta[p.id]=(stockDelta[p.id]||0)+(Number(oldIt.qty)||0);
+      });
+      cleanItems.forEach((newIt:any)=>{
+        const p=products.find(pr=>pr.id===newIt.id||pr.name===newIt.name);
+        if(p)stockDelta[p.id]=(stockDelta[p.id]||0)-(Number(newIt.qty)||0);
+      });
+      for(const [pid,delta] of Object.entries(stockDelta)){
+        if(delta!==0){
+          const prod=products.find(pr=>pr.id===pid);
+          if(prod&&typeof prod.stock==='number'){
+            await updateDoc(doc(db,'products',pid),{stock:Math.max(0,(prod.stock||0)+delta)});
+          }
+        }
+      }
+    }
+
+    // 2. Cari bakiye farklarını hesapla ve güncelle
+    const oldCust=customers.find(c=>c.name===editingSale.customerName);
+    const newCust=editSaleCustomer?customers.find(c=>c.id===editSaleCustomer):(oldCust&&editingSale.customerName!=='Perakende Müşteri'?oldCust:null);
+    const oldWasVeresiye=editingSale.method==='Veresiye';
+    const newIsVeresiye=editSaleMethod==='Veresiye';
+    const oldTotal=Number(editingSale.total)||0;
+
+    if(oldWasVeresiye&&oldCust&&newIsVeresiye&&newCust&&oldCust.id===newCust.id){
+      const diff=newTotal-oldTotal;
+      if(Math.abs(diff)>0.001){
+        await updateDoc(doc(db,'customers',oldCust.id),{balance:(oldCust.balance||0)+diff});
+      }
+    }else{
+      if(oldWasVeresiye&&oldCust){
+        await updateDoc(doc(db,'customers',oldCust.id),{balance:(oldCust.balance||0)-oldTotal});
+      }
+      if(newIsVeresiye&&newCust){
+        const baseBal=(oldWasVeresiye&&oldCust&&oldCust.id===newCust.id)?((oldCust.balance||0)-oldTotal):(newCust.balance||0);
+        await updateDoc(doc(db,'customers',newCust.id),{balance:baseBal+newTotal});
+      }
+    }
+
+    const updatedCustomerName=newCust?newCust.name:(editSaleCustomer===''?'Perakende Müşteri':(editingSale.customerName||'Perakende Müşteri'));
+    const updatedCustomerTax=newCust?(newCust.taxNum||'-'):(editSaleCustomer===''?'-':(editingSale.customerTax||'-'));
+
+    const patch={
+      items:cleanItems,
+      subTotal:rawT,
+      discountPct:dPct,
+      discountAmount:dAmt,
+      totalCost:totalCostT,
+      total:newTotal,
+      method:editSaleMethod,
+      customerName:updatedCustomerName,
+      customerTax:updatedCustomerTax,
+      updatedAt:new Date().toLocaleString('tr-TR'),
+      editedBy:currentStaff?.name||''
+    };
+    await updateDoc(doc(db,'sales',editingSale.id),patch);
+    await logAction('FİŞ_DÜZENLE','#'+(editingSale.id.slice(-6).toUpperCase())+' - '+updatedCustomerName+' - ₺'+newTotal.toFixed(2),newTotal);
+    const finalSaleObj={...editingSale,...patch};
+    setEditingSale(null);
+    if(andPrint){
+      triggerReprint(finalSaleObj);
+    }
+  };
+  const handleDeleteSale=async(sale:any)=>{
+    if(!sale?.id)return;
+    const isTahsilat=sale.method==='Tahsilat';
+    const msg=isTahsilat
+      ?('#'+sale.id.slice(-6).toUpperCase()+' nolu ₺'+(sale.total||0).toFixed(2)+' tahsilat kaydını silmek istediğinize emin misiniz? (Müşteri bakiyesi eski haline döndürülecektir)')
+      :('#'+sale.id.slice(-6).toUpperCase()+' nolu ₺'+(sale.total||0).toFixed(2)+' satış fişini silmek istediğinize emin misiniz?\n\n• Satılan ürün adetleri stoğa geri eklenecek\n• Veresiye ise müşteri bakiyesinden düşülecektir.');
+    if(!window.confirm(msg))return;
+
+    if(isTahsilat){
+      const cust=customers.find(c=>c.name===sale.customerName);
+      if(cust)await updateDoc(doc(db,'customers',cust.id),{balance:(cust.balance||0)+(Number(sale.total)||0)});
+    }else{
+      for(const item of (sale.items||[])){
+        const p=products.find(pr=>pr.id===item.id||pr.name===item.name);
+        if(p&&typeof p.stock==='number'){
+          await updateDoc(doc(db,'products',p.id),{stock:(p.stock||0)+(Number(item.qty)||0)});
+        }
+      }
+      if(sale.method==='Veresiye'&&sale.customerName&&sale.customerName!=='Perakende Müşteri'){
+        const cust=customers.find(c=>c.name===sale.customerName);
+        if(cust)await updateDoc(doc(db,'customers',cust.id),{balance:(cust.balance||0)-(Number(sale.total)||0)});
+      }
+    }
+    await deleteDoc(doc(db,'sales',sale.id));
+    await logAction('FİŞ_SİL','#'+(sale.id.slice(-6).toUpperCase())+' - '+(sale.customerName||'')+' - ₺'+((sale.total||0).toFixed(2)),sale.total||0);
+    if(editingSale?.id===sale.id)setEditingSale(null);
   };
 
   // ── Orders ────────────────────────────────────────────────────────────
@@ -1431,6 +1580,7 @@ export default function App(){
         <nav className="p-3 flex-1 overflow-y-auto space-y-0.5">
           {[
             {p:'pos',icon:<ShoppingCart size={15}/>,label:'Hızlı Satış',perm:'pos'},
+            {p:'sales.history',icon:<Receipt size={15}/>,label:'Son Fişler & Geçmiş',perm:'sales.history'},
             {p:'orders',icon:<ShoppingBag size={15}/>,label:'Siparişli Satışlar',perm:'orders',badge:orders.filter(o=>o.status==='bekliyor'||o.status==='hazirlaniyor').length||null},
             {p:'quotes',icon:<FileEdit size={15}/>,label:'Teklifler',perm:'quotes',badge2:quotes.filter(q=>q.status==='beklemede').length||null},
             {p:'returns',icon:<RefreshCw size={15}/>,label:'İade / Değişim',perm:'returns'},
@@ -1574,8 +1724,9 @@ export default function App(){
         {activePage==='pos'&&(
           <div className="flex flex-col lg:flex-row w-full">
             <div className="flex-1 p-5 flex flex-col overflow-hidden">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="relative flex-1"><Search className="absolute left-3.5 top-3 text-zinc-500" size={16}/><input type="text" value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Ürün adı veya barkod..." className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl py-3 pl-11 pr-4 outline-none focus:border-emerald-500 text-sm"/></div>
+              <div className="flex items-center gap-2.5 mb-4 flex-wrap">
+                <div className="relative flex-1 min-w-[200px]"><Search className="absolute left-3.5 top-3 text-zinc-500" size={16}/><input type="text" value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Ürün adı veya barkod..." className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl py-3 pl-11 pr-4 outline-none focus:border-emerald-500 text-sm"/></div>
+                <button onClick={()=>setActivePage('sales.history')} className="px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-2 border bg-zinc-900 text-emerald-400 border-zinc-800 hover:border-emerald-500 hover:bg-emerald-500/10 transition-all"><Receipt size={15}/> Son Fişler ({sales.filter(s=>s.method!=='Tahsilat').length})</button>
                 <button onClick={()=>setOrderMode(!orderMode)} className={'px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-2 border transition-all '+(orderMode?'bg-orange-500 text-zinc-950 border-orange-500':'bg-zinc-800 text-zinc-400 border-zinc-700 hover:border-orange-400 hover:text-orange-400')}><ShoppingBag size={15}/>{orderMode?'Sipariş Modu':'Sipariş Oluştur'}</button>
               </div>
               {orderMode&&(
@@ -1728,6 +1879,171 @@ export default function App(){
                 )}
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ═══ SON FİŞLER & SATIŞ GEÇMİŞİ ════════════════════════════════ */}
+        {activePage==='sales.history'&&(
+          <div className="p-7 w-full overflow-y-auto">
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+              <div>
+                <h2 className="text-3xl font-black flex items-center gap-3"><Receipt className="text-emerald-500"/> Son Fişler & Satış Geçmişi</h2>
+                <p className="text-zinc-500 text-sm mt-0.5">Geçmiş fişleri görüntüleyin, tekrar çıktı alın veya içeriklerini/fiyatlarını düzenleyin (stok ve cari otomatik dengelenir)</p>
+              </div>
+              <button onClick={()=>setActivePage('pos')} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-5 py-2.5 rounded-xl font-black flex items-center gap-2 text-sm shadow-lg shadow-emerald-500/20">
+                <ShoppingCart size={16}/> Hızlı Satışa Dön
+              </button>
+            </div>
+
+            {/* Arama ve Filtre Çubuğu */}
+            <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 mb-6 flex flex-wrap items-center gap-3">
+              <div className="relative flex-1 min-w-[220px]">
+                <Search className="absolute left-3.5 top-3 text-zinc-500" size={15}/>
+                <input
+                  value={saleHistorySearch}
+                  onChange={e=>setSaleHistorySearch(e.target.value)}
+                  placeholder="Fiş No (#...), müşteri adı, kasiyer veya ürün adı ara..."
+                  className="w-full bg-zinc-950 border border-zinc-700 text-white pl-10 pr-4 py-2.5 rounded-xl outline-none focus:border-emerald-500 text-sm"
+                />
+              </div>
+              <div className="flex gap-1.5 flex-wrap">
+                {(['all','Nakit','Kart','Veresiye','Tahsilat'] as const).map(m=>(
+                  <button
+                    key={m}
+                    onClick={()=>setSaleHistoryMethod(m)}
+                    className={'px-3.5 py-2 rounded-xl text-xs font-bold border transition-all '+(saleHistoryMethod===m?'bg-emerald-500 text-zinc-950 border-emerald-500':'bg-zinc-950 text-zinc-400 border-zinc-800 hover:border-zinc-700')}
+                  >
+                    {m==='all'?'Tüm Yöntemler':m}
+                  </button>
+                ))}
+              </div>
+              <input
+                type="date"
+                value={saleHistoryDate}
+                onChange={e=>setSaleHistoryDate(e.target.value)}
+                className="bg-zinc-950 border border-zinc-700 text-white px-3 py-2 rounded-xl text-sm outline-none focus:border-emerald-500"
+              />
+              {(saleHistorySearch||saleHistoryMethod!=='all'||saleHistoryDate)&&(
+                <button
+                  onClick={()=>{setSaleHistorySearch('');setSaleHistoryMethod('all');setSaleHistoryDate('');}}
+                  className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3.5 py-2 rounded-xl text-xs font-bold border border-zinc-700 flex items-center gap-1"
+                >
+                  <X size={13}/> Temizle
+                </button>
+              )}
+            </div>
+
+            {/* Fiş Listesi */}
+            {(()=>{
+              const q=saleHistorySearch.trim().toLowerCase();
+              const list=[...sales]
+                .sort((a,b)=>parseDT(b.date).getTime()-parseDT(a.date).getTime())
+                .filter(s=>{
+                  if(saleHistoryMethod!=='all'&&s.method!==saleHistoryMethod)return false;
+                  if(saleHistoryDate){
+                    const d=new Date(saleHistoryDate);
+                    const sd=parseDT(s.date);
+                    if(sd.getFullYear()!==d.getFullYear()||sd.getMonth()!==d.getMonth()||sd.getDate()!==d.getDate())return false;
+                  }
+                  if(!q)return true;
+                  const idShort=String(s.id||'').slice(-6).toLowerCase();
+                  const cust=String(s.customerName||'').toLowerCase();
+                  const staff=String(s.staffName||'').toLowerCase();
+                  const itemsStr=(s.items||[]).map((it:any)=>String(it.name||'')).join(' ').toLowerCase();
+                  return idShort.includes(q)||String(s.id||'').toLowerCase().includes(q)||cust.includes(q)||staff.includes(q)||itemsStr.includes(q);
+                });
+
+              return(
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between text-xs text-zinc-500 font-bold px-1">
+                    <span>Toplam {list.length} fiş listeleniyor</span>
+                    <span>Toplam Tutar: <strong className="text-emerald-400">₺{list.filter(s=>s.method!=='Tahsilat').reduce((a,b)=>a+(b.total||0),0).toFixed(2)}</strong></span>
+                  </div>
+                  {list.map((sale:any)=>(
+                    <div key={sale.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden hover:border-zinc-700 transition-all">
+                      <div className="flex flex-wrap items-center gap-4 p-4">
+                        <div className="bg-zinc-950 border border-zinc-800 px-3 py-2 rounded-xl text-center min-w-[82px] shrink-0">
+                          <p className="text-zinc-500 text-[9px] font-bold uppercase">Fiş No</p>
+                          <p className="text-emerald-400 font-black text-sm font-mono">#{sale.id?.slice(-6).toUpperCase()}</p>
+                        </div>
+                        <div className="flex-1 min-w-[200px]">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-black text-white text-base">{sale.customerName||'Perakende Müşteri'}</span>
+                            <span className={'text-xs font-bold px-2.5 py-0.5 rounded-full '+(sale.method==='Nakit'?'bg-emerald-500/20 text-emerald-400':sale.method==='Kart'?'bg-blue-500/20 text-blue-400':sale.method==='Veresiye'?'bg-orange-500/20 text-orange-400':'bg-purple-500/20 text-purple-400')}>{sale.method||'Satış'}</span>
+                            {(sale.discountAmount||0)>0&&<span className="text-[11px] bg-red-500/15 text-red-400 px-2 py-0.5 rounded-full font-bold">İskonto: -₺{(sale.discountAmount||0).toFixed(2)}</span>}
+                            {sale.updatedAt&&<span className="text-[10px] bg-yellow-500/15 text-yellow-400 px-2 py-0.5 rounded-full font-bold">Düzenlendi ({sale.updatedAt})</span>}
+                          </div>
+                          <div className="text-zinc-500 text-xs mt-1 flex items-center gap-3 flex-wrap">
+                            <span>📅 {sale.date}</span>
+                            {sale.staffName&&<span>👤 Kasiyer: <strong className="text-zinc-400">{sale.staffName}</strong></span>}
+                            <span>📦 {(sale.items||[]).length} kalem</span>
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0 mr-2">
+                          <div className="text-2xl font-black text-white">₺{(sale.total||0).toFixed(2)}</div>
+                          {(sale.subTotal&&sale.subTotal!==sale.total)&&<div className="text-xs text-zinc-500 line-through">₺{(sale.subTotal||0).toFixed(2)}</div>}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                          <button
+                            onClick={()=>triggerReprint(sale)}
+                            className="bg-white hover:bg-zinc-200 text-zinc-950 px-3.5 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 shadow"
+                            title="Fişi Tekrar Yazdır"
+                          >
+                            <Printer size={13}/> Tekrar Yazdır
+                          </button>
+                          {sale.method!=='Tahsilat'&&(
+                            <button
+                              onClick={()=>openEditSale(sale)}
+                              className="bg-emerald-500/15 hover:bg-emerald-500 hover:text-zinc-950 text-emerald-400 border border-emerald-500/30 px-3.5 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all"
+                              title="Fiş İçeriğini, Fiyatları veya Ödeme Yöntemini Düzenle"
+                            >
+                              <Pencil size={13}/> Fişi Düzenle
+                            </button>
+                          )}
+                          {sale.method!=='Tahsilat'&&(
+                            <button
+                              onClick={()=>{
+                                setCart((sale.items||[]).map((it:any)=>({...it})));
+                                const matched=customers.find(c=>c.name===sale.customerName);
+                                setCartCustomer(matched?matched.id:'');
+                                setDiscountPct(sale.discountPct?String(sale.discountPct):'');
+                                setDiscountAmtInput(sale.discountAmount?String(sale.discountAmount):'');
+                                setActivePage('pos');
+                              }}
+                              className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5"
+                              title="Yeni satış yapmak üzere bu fişin ürünlerini POS sepetine kopyala"
+                            >
+                              <ShoppingCart size={13}/> Sepete Kopyala
+                            </button>
+                          )}
+                          <button
+                            onClick={()=>handleDeleteSale(sale)}
+                            className="bg-zinc-800 hover:bg-red-600 text-zinc-400 hover:text-white border border-zinc-700 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1 transition-all"
+                            title="Fişi İptal Et / Sil"
+                          >
+                            <Trash2 size={13}/> Sil
+                          </button>
+                        </div>
+                      </div>
+                      {(sale.items||[]).length>0&&(
+                        <div className="border-t border-zinc-800/60 bg-zinc-950/40 px-4 py-2.5 flex flex-wrap gap-2">
+                          {(sale.items||[]).map((item:any,i:number)=>(
+                            <span key={i} className="text-xs bg-zinc-800/80 border border-zinc-700/60 text-zinc-300 px-2.5 py-1 rounded-xl font-medium">
+                              {item.name} <strong className="text-white">×{item.qty}</strong> <span className="text-emerald-400 font-bold">₺{((Number(item.grossPrice)||0)*(Number(item.qty)||1)).toFixed(2)}</span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {list.length===0&&(
+                    <div className="text-center text-zinc-600 py-16 font-bold text-lg bg-zinc-900/40 border border-zinc-800 rounded-3xl">
+                      Aradığınız kriterlere uygun fiş bulunamadı.
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -2654,12 +2970,33 @@ export default function App(){
                     </form>
                   </div>
                   <div className="bg-zinc-900 p-7 rounded-[30px] border border-zinc-800 flex flex-col">
-                    <h3 className="text-lg font-black mb-5 border-b border-zinc-800 pb-3 flex justify-between items-center">Son Satışlar <Tag className="text-zinc-600" size={15}/></h3>
+                    <h3 className="text-lg font-black mb-5 border-b border-zinc-800 pb-3 flex justify-between items-center">
+                      <span>Son Satışlar</span>
+                      <button onClick={()=>setActivePage('sales.history')} className="text-xs font-bold text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
+                        <Receipt size={13}/> Tüm Fişleri Gör & Düzenle
+                      </button>
+                    </h3>
                     <div className="flex-1 overflow-y-auto space-y-3 pr-1">
                       {sales.slice().reverse().slice(0,15).map((s,idx)=>(
-                        <div key={idx} className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 flex justify-between items-center">
-                          <div><div className="text-lg font-black text-emerald-400">₺{(s.total||0).toFixed(2)}</div><div className="text-[10px] text-zinc-600 font-mono">{s.date}</div></div>
-                          <div className="text-right"><div className="font-bold text-zinc-300 text-sm">{s.customerName}</div><div className="flex gap-1 justify-end mt-0.5"><span className="text-[10px] bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800 text-zinc-500">{s.method}</span>{s.staffName&&<span className="text-[10px] bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800 text-zinc-600">{s.staffName}</span>}</div></div>
+                        <div key={idx} className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 flex justify-between items-center gap-3">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-lg font-black text-emerald-400">₺{(s.total||0).toFixed(2)}</span>
+                              <span className="text-[10px] text-zinc-500 font-mono bg-zinc-900 px-1.5 py-0.5 rounded">#{s.id?.slice(-6).toUpperCase()}</span>
+                            </div>
+                            <div className="text-[10px] text-zinc-600 font-mono mt-0.5">{s.date}</div>
+                          </div>
+                          <div className="text-right flex-1 min-w-0">
+                            <div className="font-bold text-zinc-300 text-sm truncate">{s.customerName}</div>
+                            <div className="flex gap-1 justify-end mt-0.5">
+                              <span className="text-[10px] bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800 text-zinc-500">{s.method}</span>
+                              {s.staffName&&<span className="text-[10px] bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800 text-zinc-600">{s.staffName}</span>}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button onClick={()=>triggerReprint(s)} className="bg-zinc-800 hover:bg-white hover:text-zinc-950 text-zinc-300 p-2 rounded-xl border border-zinc-700 transition-all" title="Tekrar Yazdır"><Printer size={13}/></button>
+                            {s.method!=='Tahsilat'&&<button onClick={()=>openEditSale(s)} className="bg-zinc-800 hover:bg-emerald-500 hover:text-zinc-950 text-emerald-400 p-2 rounded-xl border border-zinc-700 transition-all" title="Fişi Düzenle"><Pencil size={13}/></button>}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -2797,15 +3134,22 @@ export default function App(){
                   <div className="bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden">
                     <div className="p-5 border-b border-zinc-800"><h3 className="font-black flex items-center gap-2"><Receipt size={14} className="text-emerald-500"/> {new Date(reportDate).toLocaleDateString('tr-TR')} Satışları</h3></div>
                     <table className="w-full text-sm">
-                      <thead className="bg-zinc-950 text-zinc-500 text-xs font-bold uppercase"><tr><th className="p-4 text-left">Müşteri</th><th className="p-4 text-left">Saat</th><th className="p-4 text-left">Kasiyer</th><th className="p-4 text-left">Yöntem</th><th className="p-4 text-right">Toplam</th></tr></thead>
+                      <thead className="bg-zinc-950 text-zinc-500 text-xs font-bold uppercase"><tr><th className="p-4 text-left">Fiş No</th><th className="p-4 text-left">Müşteri</th><th className="p-4 text-left">Saat</th><th className="p-4 text-left">Kasiyer</th><th className="p-4 text-left">Yöntem</th><th className="p-4 text-right">Toplam</th><th className="p-4 text-center">İşlem</th></tr></thead>
                       <tbody className="divide-y divide-zinc-800/50">
                         {reportSales.filter(s=>s.method!=='Tahsilat').map((s,i)=>(
                           <tr key={i} className="hover:bg-zinc-800/30">
+                            <td className="p-4 font-mono text-xs text-emerald-400 font-bold">#{s.id?.slice(-6).toUpperCase()}</td>
                             <td className="p-4 font-bold text-zinc-300 text-sm">{s.customerName}</td>
                             <td className="p-4 text-zinc-500 font-mono text-xs">{s.date?.split(' ')[1]}</td>
                             <td className="p-4 text-zinc-500 text-xs">{s.staffName||'-'}</td>
                             <td className="p-4"><span className={'text-xs font-bold px-2 py-1 rounded-lg '+(s.method==='Nakit'?'bg-emerald-500/20 text-emerald-400':s.method==='Kart'?'bg-blue-500/20 text-blue-400':'bg-orange-500/20 text-orange-400')}>{s.method}</span></td>
                             <td className="p-4 text-right font-black text-white">₺{(s.total||0).toFixed(2)}</td>
+                            <td className="p-4 text-center">
+                              <div className="flex items-center justify-center gap-1.5">
+                                <button onClick={()=>triggerReprint(s)} className="bg-zinc-800 hover:bg-white hover:text-zinc-950 text-zinc-300 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-zinc-700 flex items-center gap-1"><Printer size={11}/> Yazdır</button>
+                                <button onClick={()=>openEditSale(s)} className="bg-zinc-800 hover:bg-emerald-500 hover:text-zinc-950 text-emerald-400 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-zinc-700 flex items-center gap-1"><Pencil size={11}/> Düzenle</button>
+                              </div>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -3296,6 +3640,212 @@ export default function App(){
         </div>
       )}
 
+      {/* ═══ FİŞ DÜZENLEME & YENİDEN YAZDIRMA MODALI ══════════════════════ */}
+      {editingSale&&(()=>{
+        const eRaw=editSaleCart.reduce((t:number,i:any)=>t+((Number(i.grossPrice)||0)*(Number(i.qty)||0)),0);
+        const eManAmt=parseFloat(editSaleDiscountAmt);
+        const eHasMan=editSaleDiscountAmt.trim()!==''&&!isNaN(eManAmt);
+        const eDiscAmt=eHasMan?Math.min(eRaw,Math.max(0,eManAmt)):eRaw*((parseFloat(editSaleDiscountPct)||0)/100);
+        const eTotal=Math.max(0,eRaw-eDiscAmt);
+        return(
+          <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-[350] p-4">
+            <div className="bg-zinc-900 border border-zinc-700 rounded-[32px] w-full max-w-2xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-in zoom-in duration-300">
+              <div className="p-6 border-b border-zinc-800 bg-zinc-950/60 flex justify-between items-center shrink-0">
+                <div>
+                  <h3 className="text-xl font-black text-white flex items-center gap-2">
+                    <Receipt size={18} className="text-emerald-400"/> Fiş Düzenle — <span className="text-emerald-400 font-mono">#{editingSale.id?.slice(-6).toUpperCase()}</span>
+                  </h3>
+                  <p className="text-zinc-500 text-xs mt-0.5">Tarih: {editingSale.date} · Stok ve müşteri cari bakiyesi farkları otomatik güncellenir</p>
+                </div>
+                <button onClick={()=>setEditingSale(null)} className="text-zinc-500 hover:text-white bg-zinc-800 p-2 rounded-xl"><X size={18}/></button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                {/* Müşteri ve Ödeme Yöntemi */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-zinc-500 uppercase">Müşteri / Cari</label>
+                    <select value={editSaleCustomer} onChange={e=>setEditSaleCustomer(e.target.value)} className="w-full bg-zinc-950 border border-zinc-700 text-white p-2.5 rounded-xl outline-none focus:border-emerald-500 text-sm font-bold">
+                      <option value="">-- Perakende Müşteri --</option>
+                      {customers.map(c=><option key={c.id} value={c.id}>{c.name} (₺{(c.balance||0).toFixed(2)})</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-zinc-500 uppercase">Ödeme Yöntemi</label>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {(['Nakit','Kart','Veresiye'] as const).map(m=>(
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={()=>setEditSaleMethod(m)}
+                          className={'py-2.5 rounded-xl text-xs font-black border transition-all '+(editSaleMethod===m?(m==='Nakit'?'bg-emerald-500 text-zinc-950 border-emerald-500':m==='Kart'?'bg-blue-500 text-white border-blue-500':'bg-orange-500 text-zinc-950 border-orange-500'):'bg-zinc-950 text-zinc-400 border-zinc-800')}
+                        >
+                          {m}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Fişe Yeni Ürün Ekleme Arama Kutusu */}
+                <div className="relative">
+                  <label className="text-xs font-bold text-zinc-500 uppercase block mb-1">Fişe Ürün Ekle</label>
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-3 top-2.5 text-zinc-500" size={14}/>
+                      <input
+                        value={editSaleProductSearch}
+                        onChange={e=>setEditSaleProductSearch(e.target.value)}
+                        placeholder="Katalogdan ürün ara ve fişe ekle..."
+                        className="w-full bg-zinc-950 border border-zinc-700 text-white pl-9 pr-4 py-2 rounded-xl outline-none focus:border-emerald-500 text-sm"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={()=>setEditSaleCart(prev=>[...prev,{id:'MAN-'+Date.now(),name:'Muhtelif Ürün',grossPrice:0,costPrice:0,taxRate:20,qty:1}])}
+                      className="bg-zinc-800 hover:bg-zinc-700 text-emerald-400 border border-zinc-700 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1 shrink-0"
+                    >
+                      <Plus size={13}/> Serbest Satır
+                    </button>
+                  </div>
+                  {editSaleProductSearch.trim()!==''&&(
+                    <div className="absolute left-0 right-0 top-full z-50 bg-zinc-800 border border-zinc-700 rounded-xl mt-1 max-h-44 overflow-y-auto shadow-2xl">
+                      {products.filter(p=>(p.name||'').toLowerCase().includes(editSaleProductSearch.toLowerCase())||(p.barcode||'').includes(editSaleProductSearch)).slice(0,8).map(p=>(
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={()=>{
+                            setEditSaleCart(prev=>{
+                              const ex=prev.find((i:any)=>i.id===p.id);
+                              if(ex)return prev.map((i:any)=>i.id===p.id?{...i,qty:(Number(i.qty)||1)+1}:i);
+                              return[...prev,{...p,qty:1}];
+                            });
+                            setEditSaleProductSearch('');
+                          }}
+                          className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-zinc-700 text-left text-sm"
+                        >
+                          <span className="text-white font-bold">{p.name} <span className="text-zinc-500 text-xs">(Stok: {p.stock||0})</span></span>
+                          <span className="text-emerald-400 font-black">₺{(p.grossPrice||0).toFixed(2)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Fişteki Ürün Satırları (İsim, Birim Fiyat ve Adet Düzenlenebilir) */}
+                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                  {editSaleCart.map((item:any,idx:number)=>(
+                    <div key={idx} className="bg-zinc-950 p-3 rounded-2xl border border-zinc-800 flex flex-wrap items-center gap-2">
+                      <input
+                        type="text"
+                        value={item.name||''}
+                        onChange={e=>setEditSaleCart(editSaleCart.map((i:any,ii:number)=>ii===idx?{...i,name:e.target.value}:i))}
+                        className="font-bold text-zinc-200 bg-transparent border-b border-transparent focus:border-emerald-500 outline-none flex-1 min-w-[140px] text-sm"
+                      />
+                      <div className="flex items-center gap-1 bg-zinc-900 px-2.5 py-1.5 rounded-xl border border-zinc-800 focus-within:border-emerald-500">
+                        <span className="text-[10px] text-zinc-500 font-bold uppercase">Birim ₺</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={item.grossPrice??''}
+                          onChange={e=>setEditSaleCart(editSaleCart.map((i:any,ii:number)=>ii===idx?{...i,grossPrice:e.target.value===''?'':parseFloat(e.target.value)}:i))}
+                          className="w-20 bg-transparent text-emerald-400 font-black text-sm outline-none text-right"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1 bg-zinc-900 p-1 rounded-xl border border-zinc-800">
+                        <button type="button" onClick={()=>setEditSaleCart(editSaleCart.map((i:any,ii:number)=>ii===idx?{...i,qty:Math.max(1,(Number(i.qty)||1)-1)}:i))} className="text-zinc-500 hover:text-emerald-500 p-0.5"><MinusCircle size={17}/></button>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={item.qty??''}
+                          onChange={e=>setEditSaleCart(editSaleCart.map((i:any,ii:number)=>ii===idx?{...i,qty:e.target.value===''?'':Math.max(0,parseFloat(e.target.value))}:i))}
+                          onBlur={e=>{const n=parseFloat(e.target.value);if(!n||n<=0)setEditSaleCart(editSaleCart.map((i:any,ii:number)=>ii===idx?{...i,qty:1}:i));}}
+                          className="w-12 bg-zinc-950 border border-zinc-800 rounded-lg py-0.5 text-center font-black text-xs text-white outline-none focus:border-emerald-500"
+                        />
+                        <button type="button" onClick={()=>setEditSaleCart(editSaleCart.map((i:any,ii:number)=>ii===idx?{...i,qty:(Number(i.qty)||0)+1}:i))} className="text-zinc-500 hover:text-emerald-500 p-0.5"><PlusCircle size={17}/></button>
+                      </div>
+                      <span className="text-white font-black text-sm w-20 text-right">₺{((Number(item.grossPrice)||0)*(Number(item.qty)||0)).toFixed(2)}</span>
+                      <button type="button" onClick={()=>setEditSaleCart(editSaleCart.filter((_:any,ii:number)=>ii!==idx))} className="text-zinc-600 hover:text-red-500 p-1"><Trash2 size={14}/></button>
+                    </div>
+                  ))}
+                </div>
+
+                {/* İskonto (% ve ₺) ve Toplam Özeti */}
+                <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-zinc-400 font-bold text-xs flex items-center gap-1"><Percent size={13}/> İskonto Düzenle</span>
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1">
+                        <span className="text-zinc-500 text-xs font-bold">%</span>
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.1"
+                          value={editSaleDiscountPct}
+                          onChange={e=>{
+                            const v=e.target.value;
+                            setEditSaleDiscountPct(v);
+                            const p=parseFloat(v);
+                            if(!v||isNaN(p))setEditSaleDiscountAmt('');
+                            else setEditSaleDiscountAmt(((eRaw*Math.min(100,Math.max(0,p)))/100).toFixed(2));
+                          }}
+                          placeholder="0"
+                          className="w-12 bg-transparent text-center text-white outline-none text-xs font-black"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1">
+                        <span className="text-emerald-400 text-xs font-bold">₺</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={editSaleDiscountAmt}
+                          onChange={e=>{
+                            const v=e.target.value;
+                            setEditSaleDiscountAmt(v);
+                            const a=parseFloat(v);
+                            if(!v||isNaN(a)||eRaw<=0)setEditSaleDiscountPct('');
+                            else setEditSaleDiscountPct(((Math.min(eRaw,Math.max(0,a))/eRaw)*100).toFixed(1));
+                          }}
+                          placeholder="0.00"
+                          className="w-16 bg-transparent text-center text-emerald-400 outline-none text-xs font-black"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex justify-between text-xs text-zinc-500 font-bold pt-2 border-t border-zinc-900">
+                    <span>Eski Fiş Toplamı: ₺{(editingSale.total||0).toFixed(2)}</span>
+                    <span>Ara Toplam: ₺{eRaw.toFixed(2)} {eDiscAmt>0&&('· İndirim: -₺'+eDiscAmt.toFixed(2))}</span>
+                  </div>
+                  <div className="flex justify-between items-center pt-1">
+                    <span className="text-zinc-300 font-black text-base">YENİ FİŞ TOPLAMI:</span>
+                    <span className="text-2xl font-black text-emerald-400">₺{eTotal.toFixed(2)}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-5 border-t border-zinc-800 bg-zinc-950/60 flex flex-wrap gap-2.5 shrink-0">
+                <button type="button" onClick={()=>handleDeleteSale(editingSale)} className="bg-red-500/15 hover:bg-red-600 text-red-400 hover:text-white px-4 py-3 rounded-xl font-bold border border-red-500/30 text-xs flex items-center gap-1.5 transition-all">
+                  <Trash2 size={14}/> Fişi Sil
+                </button>
+                <button type="button" onClick={()=>setEditingSale(null)} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-400 px-5 py-3 rounded-xl font-bold border border-zinc-700 text-xs ml-auto">
+                  İptal
+                </button>
+                <button type="button" onClick={()=>handleSaveEditedSale(false)} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-5 py-3 rounded-xl font-black text-xs flex items-center gap-1.5 shadow-lg shadow-emerald-500/20">
+                  <Save size={14}/> Kaydet
+                </button>
+                <button type="button" onClick={()=>handleSaveEditedSale(true)} className="bg-white hover:bg-zinc-200 text-zinc-950 px-5 py-3 rounded-xl font-black text-xs flex items-center gap-1.5 shadow-lg">
+                  <Printer size={14}/> Kaydet & Fiş Yazdır
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {editingStaff&&(
         <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-[300] p-4">
           <div className="bg-zinc-900 border border-zinc-700 rounded-[32px] w-full max-w-xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-in zoom-in duration-300">
@@ -3578,7 +4128,10 @@ export default function App(){
                             <div className="min-w-0"><p className="text-white font-bold text-sm truncate">{sale.date}</p><span className={'text-[10px] font-bold px-2 py-0.5 rounded inline-block '+(sale.method==='Veresiye'?'bg-orange-500/20 text-orange-400':sale.method==='Nakit'?'bg-emerald-500/20 text-emerald-400':'bg-blue-500/20 text-blue-400')}>{sale.method}</span></div>
                           </div>
                           <p className={'text-xl font-black '+(isSel?'text-emerald-400':'text-white')}>₺{(sale.total||0).toFixed(2)}</p>
-                          <button onClick={ev=>{ev.stopPropagation();setPrintQuote(null);setMergedPrint(null);setPrintSale(sale);setTimeout(()=>window.print(),100);}} className="shrink-0 bg-zinc-800 hover:bg-white hover:text-zinc-950 text-zinc-300 px-3 py-2 rounded-xl font-bold flex items-center gap-1 border border-zinc-700 text-xs"><Printer size={11}/> Yazdır</button>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button onClick={ev=>{ev.stopPropagation();triggerReprint(sale);}} className="bg-zinc-800 hover:bg-white hover:text-zinc-950 text-zinc-300 px-3 py-2 rounded-xl font-bold flex items-center gap-1 border border-zinc-700 text-xs"><Printer size={11}/> Yazdır</button>
+                            <button onClick={ev=>{ev.stopPropagation();openEditSale(sale);}} className="bg-zinc-800 hover:bg-emerald-500 hover:text-zinc-950 text-emerald-400 px-3 py-2 rounded-xl font-bold flex items-center gap-1 border border-zinc-700 text-xs"><Pencil size={11}/> Düzenle</button>
+                          </div>
                         </div>
                         <div className="border-t border-zinc-800/50 px-4 pb-3"><div className="flex flex-wrap gap-1.5 mt-2">{(sale.items||[]).map((item:any,i:number)=><span key={i} className="text-[11px] bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded-lg">{item.name} <span className="font-black text-zinc-300">×{item.qty}</span></span>)}</div></div>
                       </div>
