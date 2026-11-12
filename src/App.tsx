@@ -43,6 +43,34 @@ function loadXLSX(): Promise<any> {
   });
 }
 
+// ─── MOBİL KAMERA BARKOD OKUYUCU (HTML5-QRCODE CDN & BİP SESİ) ─────────────
+function loadBarcodeScanner(): Promise<any> {
+  return new Promise((resolve, reject) => {
+    if ((window as any).Html5Qrcode) return resolve((window as any).Html5Qrcode);
+    const s = document.createElement('script');
+    s.src = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
+    s.onload = () => resolve((window as any).Html5Qrcode);
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
+
+function playBeep() {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(1050, ctx.currentTime);
+    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.09);
+  } catch {}
+}
+
 // ─── FIREBASE ──────────────────────────────────────────────────────────────
 const firebaseConfig = {
   apiKey: "AIzaSyAqPHwW06rOK_kPDoyHQ-ZOqGWZtCJSLzU",
@@ -412,6 +440,21 @@ export default function App(){
   const [isVeresiyeOpen,setIsVeresiyeOpen]=useState(false);
   const [printSale,setPrintSale]=useState<any>(null);
   const [mergedPrint,setMergedPrint]=useState<any>(null);
+  // ── Mobil Kamera Barkod Okuyucu ───────────────────────────────────────
+  const [scannerOpen,setScannerOpen]=useState(false);
+  const [scannerTarget,setScannerTarget]=useState<'pos'|'newProduct'|'editProduct'|'productSearch'|'quote'|'editSale'|'count'>('pos');
+  const [scannerContinuous,setScannerContinuous]=useState(true);
+  const [scannerLastMsg,setScannerLastMsg]=useState('');
+  const [scannerError,setScannerError]=useState('');
+  const scannerRef=useRef<any>(null);
+  const lastScannedRef=useRef<{code:string;ts:number}>({code:'',ts:0});
+  const openBarcodeScanner=(target:'pos'|'newProduct'|'editProduct'|'productSearch'|'quote'|'editSale'|'count'='pos')=>{
+    setScannerTarget(target);
+    setScannerLastMsg('');
+    setScannerError('');
+    setScannerContinuous(target==='pos'||target==='count');
+    setScannerOpen(true);
+  };
   // ── Son Fişler & Fiş Düzenleme ────────────────────────────────────────
   const [saleHistorySearch,setSaleHistorySearch]=useState('');
   const [saleHistoryMethod,setSaleHistoryMethod]=useState('all');
@@ -562,6 +605,124 @@ export default function App(){
     ];
     return()=>uns.forEach(u=>u());
   },[]);
+
+  // ── Mobil Kamera Barkod İşleyici ──────────────────────────────────────
+  const handleBarcodeDetected=(rawCode:string)=>{
+    const code=String(rawCode||'').trim();
+    if(!code)return;
+    const now=Date.now();
+    if(lastScannedRef.current.code===code&&now-lastScannedRef.current.ts<1500)return;
+    lastScannedRef.current={code,ts:now};
+    playBeep();
+
+    if(scannerTarget==='newProduct'){
+      setPBarcode(code);
+      setScannerLastMsg('✅ Barkod forma yazıldı: '+code);
+      setScannerOpen(false);
+      return;
+    }
+    if(scannerTarget==='editProduct'){
+      setEditForm((prev:any)=>({...prev,barcode:code}));
+      setScannerLastMsg('✅ Barkod güncellendi: '+code);
+      setScannerOpen(false);
+      return;
+    }
+    if(scannerTarget==='productSearch'){
+      setProductSearch(code);
+      setScannerLastMsg('🔍 Ürün aramaya yazıldı: '+code);
+      setScannerOpen(false);
+      return;
+    }
+
+    const found=products.find(p=>String(p.barcode||'').trim()===code);
+    if(scannerTarget==='pos'){
+      if(found){
+        addToCart(found);
+        setFlash(true);
+        setTimeout(()=>setFlash(false),300);
+        setScannerLastMsg('✅ Sepete eklendi: '+found.name+' (₺'+(found.grossPrice||0)+')');
+        if(!scannerContinuous)setScannerOpen(false);
+      }else{
+        setSearchQuery(code);
+        setScannerLastMsg('⚠️ Tanımsız barkod: '+code);
+      }
+      return;
+    }
+    if(scannerTarget==='quote'){
+      if(found){
+        addToQuote(found);
+        setScannerLastMsg('✅ Teklife eklendi: '+found.name);
+        if(!scannerContinuous)setScannerOpen(false);
+      }else{
+        setQuoteSearch(code);
+        setScannerLastMsg('⚠️ Ürün bulunamadı: '+code);
+      }
+      return;
+    }
+    if(scannerTarget==='editSale'){
+      if(found){
+        setEditSaleCart(prev=>{
+          const ex=prev.find((i:any)=>i.id===found.id);
+          if(ex)return prev.map((i:any)=>i.id===found.id?{...i,qty:(Number(i.qty)||1)+1}:i);
+          return[...prev,{...found,qty:1}];
+        });
+        setScannerLastMsg('✅ Fişe eklendi: '+found.name);
+        if(!scannerContinuous)setScannerOpen(false);
+      }else{
+        setScannerLastMsg('⚠️ Ürün bulunamadı: '+code);
+      }
+      return;
+    }
+    if(scannerTarget==='count'){
+      if(found){
+        setCountDraft(prev=>({...prev,[found.id]:String((parseInt(prev[found.id]??String(found.stock||0),10)||0)+1)}));
+        setScannerLastMsg('🔢 Sayım +1: '+found.name);
+      }else{
+        setScannerLastMsg('⚠️ Ürün bulunamadı: '+code);
+      }
+    }
+  };
+
+  const handleBarcodeRef=useRef(handleBarcodeDetected);
+  handleBarcodeRef.current=handleBarcodeDetected;
+
+  useEffect(()=>{
+    if(!scannerOpen){
+      if(scannerRef.current){
+        scannerRef.current.stop().catch(()=>{}).finally(()=>{
+          try{scannerRef.current.clear();}catch{}
+          scannerRef.current=null;
+        });
+      }
+      return;
+    }
+    let cancelled=false;
+    (async()=>{
+      try{
+        const Html5Qrcode=await loadBarcodeScanner();
+        if(cancelled)return;
+        const html5QrCode=new Html5Qrcode('mobile-barcode-reader');
+        scannerRef.current=html5QrCode;
+        await html5QrCode.start(
+          {facingMode:'environment'},
+          {fps:12,qrbox:{width:250,height:140},aspectRatio:1.5},
+          (decodedText:string)=>handleBarcodeRef.current(decodedText),
+          ()=>{}
+        );
+      }catch(err:any){
+        if(!cancelled)setScannerError('Kameraya erişilemedi. Lütfen tarayıcıdan kamera izni verin ve HTTPS bağlantısı kullandığınızdan emin olun.');
+      }
+    })();
+    return()=>{
+      cancelled=true;
+      if(scannerRef.current){
+        scannerRef.current.stop().catch(()=>{}).finally(()=>{
+          try{scannerRef.current.clear();}catch{}
+          scannerRef.current=null;
+        });
+      }
+    };
+  },[scannerOpen]);
 
   // ── Barkod okuyucu ────────────────────────────────────────────────────
   useEffect(()=>{
@@ -1630,9 +1791,10 @@ export default function App(){
       {mobileMenuOpen&&<div className="fixed inset-0 bg-black/60 z-[390] lg:hidden" onClick={()=>setMobileMenuOpen(false)}/>}
       <main className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* Mobile top bar */}
-        <div className="lg:hidden flex items-center gap-3 px-4 py-3 bg-zinc-900 border-b border-zinc-800 shrink-0">
+        <div className="lg:hidden flex items-center gap-2.5 px-4 py-3 bg-zinc-900 border-b border-zinc-800 shrink-0">
           <button onClick={()=>setMobileMenuOpen(true)} className="text-zinc-400 hover:text-white p-1.5 rounded-xl bg-zinc-800"><div className="space-y-1.5"><div className="w-5 h-0.5 bg-current"/><div className="w-5 h-0.5 bg-current"/><div className="w-5 h-0.5 bg-current"/></div></button>
           <div className="flex items-center gap-2 flex-1"><div className="w-7 h-7 bg-emerald-500 rounded-lg flex items-center justify-center font-black text-zinc-950 text-sm">M</div><span className="font-black text-white text-sm">Merkez Şube</span></div>
+          <button onClick={()=>{setActivePage('pos');openBarcodeScanner('pos');}} className="bg-emerald-500 text-zinc-950 px-3 py-1.5 rounded-xl font-black text-xs flex items-center gap-1 shadow-lg shadow-emerald-500/20">📷 Barkod Okut</button>
           <span className="text-zinc-500 text-xs">{currentStaff.name}</span>
         </div>
         <div className="flex-1 flex overflow-hidden">
@@ -1726,6 +1888,7 @@ export default function App(){
             <div className="flex-1 p-5 flex flex-col overflow-hidden">
               <div className="flex items-center gap-2.5 mb-4 flex-wrap">
                 <div className="relative flex-1 min-w-[200px]"><Search className="absolute left-3.5 top-3 text-zinc-500" size={16}/><input type="text" value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Ürün adı veya barkod..." className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl py-3 pl-11 pr-4 outline-none focus:border-emerald-500 text-sm"/></div>
+                <button type="button" onClick={()=>openBarcodeScanner('pos')} className="px-4 py-3 rounded-xl font-black text-sm flex items-center gap-2 bg-emerald-500 text-zinc-950 hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/20"><span className="text-base leading-none">📷</span> Barkod Okut</button>
                 <button onClick={()=>setActivePage('sales.history')} className="px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-2 border bg-zinc-900 text-emerald-400 border-zinc-800 hover:border-emerald-500 hover:bg-emerald-500/10 transition-all"><Receipt size={15}/> Son Fişler ({sales.filter(s=>s.method!=='Tahsilat').length})</button>
                 <button onClick={()=>setOrderMode(!orderMode)} className={'px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-2 border transition-all '+(orderMode?'bg-orange-500 text-zinc-950 border-orange-500':'bg-zinc-800 text-zinc-400 border-zinc-700 hover:border-orange-400 hover:text-orange-400')}><ShoppingBag size={15}/>{orderMode?'Sipariş Modu':'Sipariş Oluştur'}</button>
               </div>
@@ -2121,7 +2284,10 @@ export default function App(){
                 <span className="text-zinc-600 text-xs">{quoteDraft.length} ürün</span>
               </div>
               <div className="p-3 border-b border-zinc-800 shrink-0 relative">
-                <div className="relative"><Search className="absolute left-3 top-2.5 text-zinc-500" size={14}/><input value={quoteSearch} onChange={e=>setQuoteSearch(e.target.value)} placeholder="Ürün ekle..." className="w-full bg-zinc-950 border border-zinc-800 pl-9 pr-4 py-2.5 rounded-xl outline-none focus:border-purple-500 text-sm"/></div>
+                <div className="flex gap-2">
+                  <div className="relative flex-1"><Search className="absolute left-3 top-2.5 text-zinc-500" size={14}/><input value={quoteSearch} onChange={e=>setQuoteSearch(e.target.value)} placeholder="Ürün ekle..." className="w-full bg-zinc-950 border border-zinc-800 pl-9 pr-4 py-2.5 rounded-xl outline-none focus:border-purple-500 text-sm"/></div>
+                  <button type="button" onClick={()=>openBarcodeScanner('quote')} className="bg-purple-600 hover:bg-purple-500 text-white px-3 py-2 rounded-xl font-black text-xs flex items-center gap-1 shrink-0" title="Kamera ile Barkod Okut">📷 Okut</button>
+                </div>
                 {quoteSearch&&(
                   <div className="absolute left-3 right-3 top-full z-50 bg-zinc-800 border border-zinc-700 rounded-xl mt-1 max-h-48 overflow-y-auto shadow-xl">
                     {products.filter(p=>(p.name||'').toLowerCase().includes(quoteSearch.toLowerCase())).slice(0,8).map(p=>(
@@ -2384,7 +2550,7 @@ export default function App(){
                 {showAddForm&&(
                   <form onSubmit={handleAddProduct} className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl mb-6 grid grid-cols-2 lg:grid-cols-5 gap-4 animate-in slide-in-from-top duration-300">
                     <div className="space-y-1.5 col-span-2"><label className="text-xs font-bold text-zinc-500 uppercase">Ürün İsmi</label><input required value={pName} onChange={e=>setPName(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 p-3 rounded-xl outline-none focus:border-emerald-500 text-sm" placeholder="Dove Sabun 100gr"/></div>
-                    <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Barkod</label><input value={pBarcode} onChange={e=>setPBarcode(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 p-3 rounded-xl outline-none text-sm" placeholder="Okutun..."/></div>
+                    <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Barkod</label><div className="flex gap-1.5"><input value={pBarcode} onChange={e=>setPBarcode(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 p-3 rounded-xl outline-none text-sm" placeholder="Okutun..."/><button type="button" onClick={()=>openBarcodeScanner('newProduct')} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-3 rounded-xl font-black text-sm shrink-0" title="Kamera ile Barkod Okut">📷</button></div></div>
                     <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Kategori</label><select value={pCat} onChange={e=>setPCat(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 p-3 rounded-xl outline-none text-sm"><option value="">— Seç —</option>{categories.map(c=><option key={c.id} value={c.name}>{c.name}</option>)}</select></div>
                     <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Birim</label><select value={pUnit} onChange={e=>setPUnit(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 p-3 rounded-xl outline-none text-sm"><option>Adet</option><option>Koli</option><option>Paket</option></select></div>
                     <div className="space-y-1.5"><label className="text-xs font-bold text-blue-400 uppercase">Alış Fiyatı</label><input type="number" step="0.01" value={pCost} onChange={e=>setPCost(e.target.value)} className="w-full bg-blue-950/20 border border-blue-900 p-3 rounded-xl outline-none text-blue-300 text-sm" placeholder="0.00"/></div>
@@ -2449,9 +2615,12 @@ export default function App(){
                 )}
                 <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-4 mb-6 space-y-4">
                   <div className="flex flex-wrap items-center gap-3">
-                    <div className="relative flex-1 min-w-[240px]">
-                      <Search className="absolute left-3 top-3 text-zinc-500" size={15}/>
-                      <input value={productSearch} onChange={e=>setProductSearch(e.target.value)} placeholder="Urun adi, barkod, kategori veya varyant ara..." className="w-full bg-zinc-950 border border-zinc-700 text-white pl-10 pr-4 py-3 rounded-xl outline-none focus:border-emerald-500 text-sm"/>
+                    <div className="relative flex-1 min-w-[240px] flex gap-2">
+                      <div className="relative flex-1">
+                        <Search className="absolute left-3 top-3 text-zinc-500" size={15}/>
+                        <input value={productSearch} onChange={e=>setProductSearch(e.target.value)} placeholder="Urun adi, barkod, kategori veya varyant ara..." className="w-full bg-zinc-950 border border-zinc-700 text-white pl-10 pr-4 py-3 rounded-xl outline-none focus:border-emerald-500 text-sm"/>
+                      </div>
+                      <button type="button" onClick={()=>openBarcodeScanner('productSearch')} className="bg-zinc-800 hover:bg-zinc-700 text-emerald-400 border border-zinc-700 px-3.5 py-3 rounded-xl font-black text-xs flex items-center gap-1.5 shrink-0" title="Kamera ile Barkod Ara">📷 Barkod Ara</button>
                     </div>
                     <select value={productCategoryFilter} onChange={e=>setProductCategoryFilter(e.target.value)} className="bg-zinc-950 border border-zinc-700 text-zinc-300 px-3 py-3 rounded-xl outline-none text-sm min-w-[180px]">
                       <option value="all">Tum kategoriler</option>
@@ -2609,9 +2778,12 @@ export default function App(){
 
             {activePage==='stock.count'&&(
               <div className="flex-1 overflow-y-auto p-7">
-                <div className="flex items-center justify-between mb-6">
-                  <div><h2 className="text-2xl font-black flex items-center gap-2"><ClipboardCheck className="text-emerald-500"/> Stok Sayımı</h2><p className="text-zinc-500 text-sm mt-0.5">Fiziksel sayım sonuçlarını girin.</p></div>
-                  <button onClick={handleSaveCount} className={'px-6 py-3 rounded-2xl font-black flex items-center gap-2 '+(countSaved?'bg-emerald-400 text-zinc-950':'bg-emerald-500 text-zinc-950 hover:bg-emerald-400 shadow-lg shadow-emerald-500/20')}>{countSaved?<><CheckCircle size={17}/> Kaydedildi!</>:<><Save size={17}/> Kaydet</>}</button>
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+                  <div><h2 className="text-2xl font-black flex items-center gap-2"><ClipboardCheck className="text-emerald-500"/> Stok Sayımı</h2><p className="text-zinc-500 text-sm mt-0.5">Fiziksel sayım sonuçlarını girin veya kamerayla barkod okutarak sayımı +1 artırın.</p></div>
+                  <div className="flex items-center gap-2.5">
+                    <button type="button" onClick={()=>openBarcodeScanner('count')} className="bg-zinc-800 hover:bg-zinc-700 text-emerald-400 border border-emerald-500/40 px-4 py-3 rounded-2xl font-black text-sm flex items-center gap-2">📷 Kamerayla Sayım Yap</button>
+                    <button onClick={handleSaveCount} className={'px-6 py-3 rounded-2xl font-black flex items-center gap-2 '+(countSaved?'bg-emerald-400 text-zinc-950':'bg-emerald-500 text-zinc-950 hover:bg-emerald-400 shadow-lg shadow-emerald-500/20')}>{countSaved?<><CheckCircle size={17}/> Kaydedildi!</>:<><Save size={17}/> Kaydet</>}</button>
+                  </div>
                 </div>
                 <div className="bg-zinc-900 rounded-3xl overflow-hidden border border-zinc-800">
                   <div className="grid grid-cols-12 gap-0 bg-zinc-950 text-zinc-500 text-xs font-bold uppercase tracking-widest">
@@ -3529,7 +3701,7 @@ export default function App(){
             <form onSubmit={handleSaveEdit} className="p-6 grid grid-cols-2 gap-4">
               {editingProduct.variantGroup&&<div className="col-span-2 bg-purple-500/10 border border-purple-500/30 rounded-2xl p-4 text-sm text-purple-200">Bu urun <strong>{editingProduct.variantGroup}</strong> varyant grubunda. Fiyat alanlarini kaydettiginizde gruptaki tum urunler ayni fiyata guncellenir.</div>}
               <div className="space-y-1.5 col-span-2"><label className="text-xs font-bold text-zinc-500 uppercase">Ürün Adı</label><input required value={editForm.name} onChange={e=>setEditForm((p:any)=>({...p,name:e.target.value}))} className="w-full bg-zinc-950 border border-zinc-700 p-3 rounded-xl text-white outline-none focus:border-emerald-500 text-sm"/></div>
-              <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Barkod</label><input value={editForm.barcode} onChange={e=>setEditForm((p:any)=>({...p,barcode:e.target.value}))} className="w-full bg-zinc-950 border border-zinc-700 p-3 rounded-xl text-white outline-none text-sm"/></div>
+              <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Barkod</label><div className="flex gap-1.5"><input value={editForm.barcode} onChange={e=>setEditForm((p:any)=>({...p,barcode:e.target.value}))} className="w-full bg-zinc-950 border border-zinc-700 p-3 rounded-xl text-white outline-none text-sm"/><button type="button" onClick={()=>openBarcodeScanner('editProduct')} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-3 rounded-xl font-black text-sm shrink-0" title="Kamera ile Barkod Okut">📷</button></div></div>
               <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Kategori</label><select value={editForm.category} onChange={e=>setEditForm((p:any)=>({...p,category:e.target.value}))} className="w-full bg-zinc-950 border border-zinc-700 p-3 rounded-xl text-white outline-none text-sm"><option value="">— Seç —</option>{categories.map(c=><option key={c.id} value={c.name}>{c.name}</option>)}</select></div>
               <div className="space-y-1.5"><label className="text-xs font-bold text-zinc-500 uppercase">Birim</label><select value={editForm.unit} onChange={e=>setEditForm((p:any)=>({...p,unit:e.target.value}))} className="w-full bg-zinc-950 border border-zinc-700 p-3 rounded-xl text-white outline-none text-sm"><option>Adet</option><option>Koli</option><option>Paket</option></select></div>
               <div className="space-y-1.5"><label className="text-xs font-bold text-blue-400 uppercase">Alış Fiyatı</label><input type="number" step="0.01" value={editForm.costPrice} onChange={e=>setEditForm((p:any)=>({...p,costPrice:e.target.value}))} className="w-full bg-blue-950/20 border border-blue-900 p-3 rounded-xl text-blue-300 outline-none text-sm"/></div>
@@ -3700,6 +3872,13 @@ export default function App(){
                         className="w-full bg-zinc-950 border border-zinc-700 text-white pl-9 pr-4 py-2 rounded-xl outline-none focus:border-emerald-500 text-sm"
                       />
                     </div>
+                    <button
+                      type="button"
+                      onClick={()=>openBarcodeScanner('editSale')}
+                      className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-3 py-2 rounded-xl text-xs font-black flex items-center gap-1 shrink-0"
+                    >
+                      📷 Barkod
+                    </button>
                     <button
                       type="button"
                       onClick={()=>setEditSaleCart(prev=>[...prev,{id:'MAN-'+Date.now(),name:'Muhtelif Ürün',grossPrice:0,costPrice:0,taxRate:20,qty:1}])}
@@ -4195,6 +4374,60 @@ export default function App(){
                 <button onClick={()=>handleDeleteCustomer(selectedCustomer)} className="bg-zinc-800 hover:bg-red-500 text-zinc-400 hover:text-white px-5 py-3.5 rounded-2xl font-bold border border-zinc-700 flex items-center gap-2 text-sm"><Trash2 size={13}/> Sil</button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ═══ MOBİL KAMERA BARKOD OKUYUCU MODALI ═══════════════════════════ */}
+      {scannerOpen&&(
+        <div className="fixed inset-0 bg-black/95 backdrop-blur-sm flex items-center justify-center z-[500] p-4">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-[32px] w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in duration-200">
+            <div className="p-5 border-b border-zinc-800 flex justify-between items-center bg-zinc-950/60">
+              <div>
+                <h3 className="text-lg font-black text-white flex items-center gap-2">📷 Kamera ile Barkod Okut</h3>
+                <p className="text-zinc-500 text-xs mt-0.5">
+                  {scannerTarget==='pos'?'Hızlı Satış — Okutulan ürün anında sepete eklenir':
+                   scannerTarget==='newProduct'?'Yeni Ürün — Barkod numarası forma yazılır':
+                   scannerTarget==='editProduct'?'Ürün Düzenle — Barkod numarası güncellenir':
+                   scannerTarget==='count'?'Stok Sayımı — Okutulan ürünün sayımı +1 artar':
+                   scannerTarget==='editSale'?'Fiş Düzenle — Okutulan ürün fişe eklenir':
+                   scannerTarget==='quote'?'Teklif — Okutulan ürün teklife eklenir':'Barkod Arama'}
+                </p>
+              </div>
+              <button onClick={()=>setScannerOpen(false)} className="text-zinc-400 hover:text-white bg-zinc-800 p-2 rounded-xl"><X size={18}/></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div id="mobile-barcode-reader" className="w-full rounded-2xl overflow-hidden bg-black min-h-[240px] border-2 border-emerald-500/40"/>
+              {scannerError&&(
+                <div className="bg-red-500/15 border border-red-500/30 text-red-300 p-3 rounded-xl text-xs font-bold">
+                  {scannerError}
+                </div>
+              )}
+              {scannerLastMsg&&(
+                <div className="bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 p-3 rounded-xl text-sm font-black text-center">
+                  {scannerLastMsg}
+                </div>
+              )}
+              {(scannerTarget==='pos'||scannerTarget==='quote'||scannerTarget==='editSale')&&(
+                <div className="flex items-center justify-between bg-zinc-950 border border-zinc-800 px-4 py-3 rounded-xl">
+                  <span className="text-xs font-bold text-zinc-300">Seri Okutma (Kamera açık kalsın)</span>
+                  <button
+                    type="button"
+                    onClick={()=>setScannerContinuous(!scannerContinuous)}
+                    className={'w-11 h-6 rounded-full relative transition-all '+(scannerContinuous?'bg-emerald-500':'bg-zinc-700')}
+                  >
+                    <span className={'absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all '+(scannerContinuous?'left-5':'left-0.5')}/>
+                  </button>
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={()=>setScannerOpen(false)}
+                className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-black py-3.5 rounded-2xl text-sm border border-zinc-700"
+              >
+                Kamerayı Kapat {scannerTarget==='pos'&&cart.length>0?`(Sepette ${cart.reduce((a:number,b:any)=>a+(Number(b.qty)||1),0)} ürün)`:''}
+              </button>
+            </div>
           </div>
         </div>
       )}
