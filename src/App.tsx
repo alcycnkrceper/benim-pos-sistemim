@@ -43,14 +43,20 @@ function loadXLSX(): Promise<any> {
   });
 }
 
-// ─── MOBİL KAMERA BARKOD OKUYUCU (HTML5-QRCODE CDN & BİP SESİ) ─────────────
+// ─── MOBİL KAMERA BARKOD OKUYUCU (CLOUDFLARE CDN + YEDEK CDN & BİP SESİ) ─────
 function loadBarcodeScanner(): Promise<any> {
   return new Promise((resolve, reject) => {
     if ((window as any).Html5Qrcode) return resolve((window as any).Html5Qrcode);
     const s = document.createElement('script');
-    s.src = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js';
     s.onload = () => resolve((window as any).Html5Qrcode);
-    s.onerror = reject;
+    s.onerror = () => {
+      const s2 = document.createElement('script');
+      s2.src = 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js';
+      s2.onload = () => resolve((window as any).Html5Qrcode);
+      s2.onerror = reject;
+      document.head.appendChild(s2);
+    };
     document.head.appendChild(s);
   });
 }
@@ -686,6 +692,39 @@ export default function App(){
   const handleBarcodeRef=useRef(handleBarcodeDetected);
   handleBarcodeRef.current=handleBarcodeDetected;
 
+  const handlePhotoBarcodeScan=async(e:React.ChangeEvent<HTMLInputElement>)=>{
+    const file=e.target.files?.[0];
+    if(!file)return;
+    setScannerError('');
+    setScannerLastMsg('⏳ Fotoğraftaki barkod okunuyor...');
+    try{
+      if('BarcodeDetector' in window){
+        try{
+          const detector=new (window as any).BarcodeDetector({formats:['ean_13','ean_8','code_128','code_39','upc_a','upc_e','qr_code','itf']});
+          const bmp=await createImageBitmap(file);
+          const barcodes=await detector.detect(bmp);
+          if(barcodes&&barcodes.length>0&&barcodes[0].rawValue){
+            handleBarcodeRef.current(barcodes[0].rawValue);
+            e.target.value='';
+            return;
+          }
+        }catch{}
+      }
+      const Html5Qrcode=await loadBarcodeScanner();
+      const tempScanner=new Html5Qrcode('mobile-barcode-file-temp');
+      const decodedText=await tempScanner.scanFile(file,false);
+      try{tempScanner.clear();}catch{}
+      if(decodedText){
+        handleBarcodeRef.current(decodedText);
+      }
+    }catch{
+      setScannerLastMsg('');
+      setScannerError('Fotoğraftaki barkod net okunamadı. Lütfen barkoda biraz daha yaklaşıp net odaklayarak tekrar çekin.');
+    }finally{
+      e.target.value='';
+    }
+  };
+
   useEffect(()=>{
     if(!scannerOpen){
       if(scannerRef.current){
@@ -699,18 +738,55 @@ export default function App(){
     let cancelled=false;
     (async()=>{
       try{
-        const Html5Qrcode=await loadBarcodeScanner();
+        await loadBarcodeScanner();
         if(cancelled)return;
-        const html5QrCode=new Html5Qrcode('mobile-barcode-reader');
+        const Html5Qrcode=(window as any).Html5Qrcode;
+        const Fmts=(window as any).Html5QrcodeSupportedFormats;
+        const formatsToSupport=Fmts?[
+          Fmts.EAN_13,Fmts.EAN_8,Fmts.CODE_128,Fmts.CODE_39,
+          Fmts.UPC_A,Fmts.UPC_E,Fmts.ITF,Fmts.QR_CODE
+        ]:undefined;
+
+        const html5QrCode=new Html5Qrcode('mobile-barcode-reader',{
+          formatsToSupport,
+          useBarCodeDetectorIfSupported:true,
+          verbose:false
+        });
         scannerRef.current=html5QrCode;
-        await html5QrCode.start(
-          {facingMode:'environment'},
-          {fps:12,qrbox:{width:250,height:140},aspectRatio:1.5},
-          (decodedText:string)=>handleBarcodeRef.current(decodedText),
-          ()=>{}
-        );
+
+        const scanConfig={
+          fps:20,
+          qrbox:(viewfinderWidth:number,viewfinderHeight:number)=>({
+            width:Math.max(200,Math.floor(viewfinderWidth*0.86)),
+            height:Math.max(110,Math.floor(viewfinderHeight*0.45))
+          }),
+          disableFlip:false,
+          videoConstraints:{
+            facingMode:'environment',
+            width:{ideal:1920},
+            height:{ideal:1080},
+            focusMode:'continuous'
+          } as any
+        };
+
+        try{
+          await html5QrCode.start(
+            {facingMode:'environment'},
+            scanConfig,
+            (decodedText:string)=>handleBarcodeRef.current(decodedText),
+            ()=>{}
+          );
+        }catch{
+          // Yüksek çözünürlük kısıtlamasını desteklemeyen telefonlar için standart kamera başlatma
+          await html5QrCode.start(
+            {facingMode:'environment'},
+            {fps:15,qrbox:{width:250,height:130}},
+            (decodedText:string)=>handleBarcodeRef.current(decodedText),
+            ()=>{}
+          );
+        }
       }catch(err:any){
-        if(!cancelled)setScannerError('Kameraya erişilemedi. Lütfen tarayıcıdan kamera izni verin ve HTTPS bağlantısı kullandığınızdan emin olun.');
+        if(!cancelled)setScannerError('Canlı kameraya erişilemedi. Aşağıdaki "📸 Fotoğraf Çekerek Barkod Okut" butonunu kullanarak doğrudan telefon kameranızla okutabilirsiniz.');
       }
     })();
     return()=>{
@@ -4396,8 +4472,14 @@ export default function App(){
               </div>
               <button onClick={()=>setScannerOpen(false)} className="text-zinc-400 hover:text-white bg-zinc-800 p-2 rounded-xl"><X size={18}/></button>
             </div>
-            <div className="p-5 space-y-4">
-              <div id="mobile-barcode-reader" className="w-full rounded-2xl overflow-hidden bg-black min-h-[240px] border-2 border-emerald-500/40"/>
+            <div className="p-5 space-y-3.5">
+              <div id="mobile-barcode-reader" className="w-full rounded-2xl overflow-hidden bg-black min-h-[250px] border-2 border-emerald-500/50 relative"/>
+              <div id="mobile-barcode-file-temp" style={{display:'none'}}/>
+              <p className="text-[11px] text-zinc-400 text-center">Barkodu kameraya <strong>15–20 cm</strong> mesafeden yatay tutun veya net odaklama için aşağıdaki fotoğraf butonunu kullanın.</p>
+              <label className="w-full bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 font-black py-3 px-4 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all">
+                <span>📸 Net Odaklamalı Fotoğraf Çekerek Okut</span>
+                <input type="file" accept="image/*" capture="environment" onChange={handlePhotoBarcodeScan} style={{display:'none'}}/>
+              </label>
               {scannerError&&(
                 <div className="bg-red-500/15 border border-red-500/30 text-red-300 p-3 rounded-xl text-xs font-bold">
                   {scannerError}
