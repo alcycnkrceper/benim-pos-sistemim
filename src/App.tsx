@@ -43,17 +43,17 @@ function loadXLSX(): Promise<any> {
   });
 }
 
-// ─── ULTRA HIZLI BARKOD MOTORU (NATIVE BARCODEDETECTOR + ZXING FALLBACK) ────
-function loadZXing(): Promise<any> {
+// ─── ULTRA HIZLI ÇİFT MOTORLU BARKOD OKUYUCU (BARCODEDETECTOR + HTML5-QRCODE DECODER) ───
+function loadBarcodeDecoderLib(): Promise<any> {
   return new Promise((resolve, reject) => {
-    if ((window as any).ZXing) return resolve((window as any).ZXing);
+    if ((window as any).Html5Qrcode) return resolve((window as any).Html5Qrcode);
     const s = document.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
-    s.onload = () => resolve((window as any).ZXing);
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js';
+    s.onload = () => resolve((window as any).Html5Qrcode);
     s.onerror = () => {
       const s2 = document.createElement('script');
-      s2.src = 'https://cdnjs.cloudflare.com/ajax/libs/zxing-js/0.21.3/index.min.js';
-      s2.onload = () => resolve((window as any).ZXing);
+      s2.src = 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js';
+      s2.onload = () => resolve((window as any).Html5Qrcode);
       s2.onerror = reject;
       document.head.appendChild(s2);
     };
@@ -453,6 +453,11 @@ export default function App(){
   const [scannerLastMsg,setScannerLastMsg]=useState('');
   const [scannerError,setScannerError]=useState('');
   const [torchOn,setTorchOn]=useState(false);
+  const [cameraDevices,setCameraDevices]=useState<{deviceId:string;label:string}[]>([]);
+  const [selectedCameraId,setSelectedCameraId]=useState<string>('');
+  const [cameraZoom,setCameraZoom]=useState<number>(1);
+  const [maxCameraZoom,setMaxCameraZoom]=useState<number>(1);
+  const [manualScanInput,setManualScanInput]=useState<string>('');
   const videoRef=useRef<HTMLVideoElement|null>(null);
   const streamRef=useRef<MediaStream|null>(null);
   const scanLoopRef=useRef<number|null>(null);
@@ -497,6 +502,15 @@ export default function App(){
     }catch{
       setScannerLastMsg('ℹ️ Bu cihazda el feneri kontrolü desteklenmiyor.');
     }
+  };
+
+  const handleZoomChange=async(newZoom:number)=>{
+    setCameraZoom(newZoom);
+    try{
+      const track=streamRef.current?.getVideoTracks()?.[0];
+      if(!track)return;
+      await (track as any).applyConstraints({advanced:[{zoom:newZoom}]});
+    }catch{}
   };
   // ── Son Fişler & Fiş Düzenleme ────────────────────────────────────────
   const [saleHistorySearch,setSaleHistorySearch]=useState('');
@@ -729,42 +743,57 @@ export default function App(){
   const handleBarcodeRef=useRef(handleBarcodeDetected);
   handleBarcodeRef.current=handleBarcodeDetected;
 
+  const decodeFileOrBlob=async(fileOrBlob:File|Blob):Promise<string|null>=>{
+    if('BarcodeDetector' in window){
+      try{
+        const detector=new (window as any).BarcodeDetector({formats:['ean_13','ean_8','code_128','code_39','upc_a','upc_e','qr_code','itf']});
+        const bmp=await createImageBitmap(fileOrBlob);
+        const barcodes=await detector.detect(bmp);
+        try{bmp.close?.();}catch{}
+        if(barcodes&&barcodes.length>0&&barcodes[0].rawValue){
+          return String(barcodes[0].rawValue).trim();
+        }
+      }catch{}
+    }
+    try{
+      const Html5Qrcode=await loadBarcodeDecoderLib();
+      let ghostEl=document.getElementById('offscreen-barcode-Ghost');
+      if(!ghostEl){
+        ghostEl=document.createElement('div');
+        ghostEl.id='offscreen-barcode-Ghost';
+        ghostEl.style.display='none';
+        document.body.appendChild(ghostEl);
+      }
+      const Fmts=(window as any).Html5QrcodeSupportedFormats;
+      const formatsToSupport=Fmts?[
+        Fmts.EAN_13,Fmts.EAN_8,Fmts.CODE_128,Fmts.CODE_39,
+        Fmts.UPC_A,Fmts.UPC_E,Fmts.ITF,Fmts.QR_CODE
+      ]:undefined;
+      const decoder=new Html5Qrcode('offscreen-barcode-Ghost',{formatsToSupport,useBarCodeDetectorIfSupported:true,verbose:false});
+      const fileObj=fileOrBlob instanceof File?fileOrBlob:new File([fileOrBlob],'frame.jpg',{type:'image/jpeg'});
+      const decoded=await decoder.scanFile(fileObj,false);
+      return decoded?String(decoded).trim():null;
+    }catch{
+      return null;
+    }
+  };
+
   const handlePhotoBarcodeScan=async(e:React.ChangeEvent<HTMLInputElement>)=>{
     const file=e.target.files?.[0];
     if(!file)return;
     setScannerError('');
     setScannerLastMsg('⏳ Fotoğraftaki barkod okunuyor...');
     try{
-      if('BarcodeDetector' in window){
-        try{
-          const detector=new (window as any).BarcodeDetector({formats:['ean_13','ean_8','code_128','code_39','upc_a','upc_e','qr_code','itf']});
-          const bmp=await createImageBitmap(file);
-          const barcodes=await detector.detect(bmp);
-          if(barcodes&&barcodes.length>0&&barcodes[0].rawValue){
-            handleBarcodeRef.current(barcodes[0].rawValue);
-            e.target.value='';
-            return;
-          }
-        }catch{}
-      }
-      const ZXing=await loadZXing();
-      const reader=new ZXing.BrowserMultiFormatReader();
-      const imgUrl=URL.createObjectURL(file);
-      try{
-        const res=await reader.decodeFromImageUrl(imgUrl);
-        URL.revokeObjectURL(imgUrl);
-        if(res&&res.getText()){
-          handleBarcodeRef.current(res.getText());
-          e.target.value='';
-          return;
-        }
-      }catch{
-        URL.revokeObjectURL(imgUrl);
-        throw new Error('Could not decode');
+      const code=await decodeFileOrBlob(file);
+      if(code){
+        handleBarcodeRef.current(code);
+      }else{
+        setScannerLastMsg('');
+        setScannerError('Fotoğraftaki barkod net okunamadı. Lütfen barkodu çerçeveye yaklaştırıp net odaklayarak tekrar çekin.');
       }
     }catch{
       setScannerLastMsg('');
-      setScannerError('Fotoğraftaki barkod net okunamadı. Lütfen barkoda 15 cm mesafeden net odaklayarak tekrar çekin.');
+      setScannerError('Fotoğraftaki barkod okunamadı.');
     }finally{
       e.target.value='';
     }
@@ -776,36 +805,81 @@ export default function App(){
       return;
     }
     let cancelled=false;
-    let zxingReader:any=null;
 
     (async()=>{
       try{
-        const constraints:MediaStreamConstraints={
-          audio:false,
-          video:{
-            facingMode:{ideal:'environment'},
-            width:{ideal:1280},
-            height:{ideal:720}
-          }
+        stopCameraStream();
+        // Kütüphaneyi arka planda hazırla
+        loadBarcodeDecoderLib().catch(()=>{});
+
+        const videoConstraints:any={
+          width:{ideal:1920},
+          height:{ideal:1080}
         };
+        if(selectedCameraId){
+          videoConstraints.deviceId={exact:selectedCameraId};
+        }else{
+          videoConstraints.facingMode={ideal:'environment'};
+        }
+
         let stream:MediaStream;
         try{
-          stream=await navigator.mediaDevices.getUserMedia(constraints);
+          stream=await navigator.mediaDevices.getUserMedia({audio:false,video:videoConstraints});
         }catch{
-          stream=await navigator.mediaDevices.getUserMedia({video:true,audio:false});
+          stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:'environment'}});
         }
         if(cancelled){
           stream.getTracks().forEach(t=>t.stop());
           return;
         }
+
+        // Kamera izinleri alındıktan sonra arka kameraları listele; geniş açı (0.5x/ultra-wide) yerine ana kamerayı (main/0) seç
+        try{
+          const allDevs=await navigator.mediaDevices.enumerateDevices();
+          const vDevs=allDevs.filter(d=>d.kind==='videoinput').map((d,idx)=>({
+            deviceId:d.deviceId,
+            label:d.label||(`Kamera ${idx+1}`)
+          }));
+          if(vDevs.length>0){
+            setCameraDevices(vDevs);
+            const currentTrack=stream.getVideoTracks()[0];
+            const currentSettings=currentTrack?.getSettings?.();
+            const curLabel=(currentTrack?.label||'').toLowerCase();
+            // Eğer şu an seçili kamera "ultra" veya "wide" (geniş açı, yakın odak yapamaz) ise ve normal arka kamera varsa otomatik ona geç
+            if(!selectedCameraId&&vDevs.length>1&&(curLabel.includes('ultra')||curLabel.includes('0.5')||curLabel.includes('macro'))){
+              const mainBack=vDevs.find(d=>{
+                const l=d.label.toLowerCase();
+                return (l.includes('back')||l.includes('arka')||l.includes('environment')||l.includes('0'))&&!l.includes('ultra')&&!l.includes('wide');
+              });
+              if(mainBack&&mainBack.deviceId!==currentSettings?.deviceId){
+                setSelectedCameraId(mainBack.deviceId);
+                return;
+              }
+            }
+          }
+        }catch{}
+
         streamRef.current=stream;
 
-        // Sürekli otomatik netleme (continuous autofocus) destekleyen kameralarda aktif et
+        // Sürekli otomatik odaklama (continuous focus) + Yakın çekim netliği için hafif optik/dijital Zoom (1.5x)
         try{
           const track=stream.getVideoTracks()[0];
-          const caps=(track as any).getCapabilities?.();
-          if(caps?.focusMode?.includes?.('continuous')){
-            await (track as any).applyConstraints({advanced:[{focusMode:'continuous'}]});
+          const caps=(track as any).getCapabilities?.()||{};
+          const adv:any={};
+          if(caps.focusMode?.includes?.('continuous'))adv.focusMode='continuous';
+          if(caps.zoom){
+            const minZ=caps.zoom.min||1;
+            const maxZ=Math.min(caps.zoom.max||1,4);
+            setMaxCameraZoom(maxZ);
+            const idealZ=Math.min(maxZ,Math.max(minZ,1.5));
+            setCameraZoom(idealZ);
+            if(idealZ>1)adv.zoom=idealZ;
+          }else{
+            setMaxCameraZoom(1);
+            setCameraZoom(1);
+          }
+          if(Object.keys(adv).length>0){
+            await (track as any).applyConstraints({advanced:[adv]});
           }
         }catch{}
 
@@ -814,7 +888,6 @@ export default function App(){
         videoEl.srcObject=stream;
         await videoEl.play().catch(()=>{});
 
-        // 1. Öncelik: Tarayıcı yerleşik donanım hızlandırmalı BarcodeDetector (Android Chrome vb. anında okur)
         let nativeDetector:any=null;
         if('BarcodeDetector' in window){
           try{
@@ -824,71 +897,68 @@ export default function App(){
           }catch{}
         }
 
-        // 2. Yedek: ZXing kütüphanesi (iOS Safari ve diğer tarayıcılar için)
-        let canvas:HTMLCanvasElement|null=null;
-        let ctx:CanvasRenderingContext2D|null=null;
-        if(!nativeDetector){
-          try{
-            const ZXing=await loadZXing();
-            if(cancelled)return;
-            const hints=new Map();
-            const formats=[
-              ZXing.BarcodeFormat.EAN_13,
-              ZXing.BarcodeFormat.EAN_8,
-              ZXing.BarcodeFormat.CODE_128,
-              ZXing.BarcodeFormat.CODE_39,
-              ZXing.BarcodeFormat.UPC_A,
-              ZXing.BarcodeFormat.UPC_E,
-              ZXing.BarcodeFormat.ITF,
-              ZXing.BarcodeFormat.QR_CODE
-            ];
-            hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,formats);
-            hints.set(ZXing.DecodeHintType.TRY_HARDER,true);
-            zxingReader=new ZXing.MultiFormatReader();
-            zxingReader.setHints(hints);
-            canvas=document.createElement('canvas');
-            ctx=canvas.getContext('2d',{willReadFrequently:true});
-          }catch{}
-        }
-
+        const canvas=document.createElement('canvas');
+        const ctx=canvas.getContext('2d',{willReadFrequently:true});
         let busy=false;
+        let tick=0;
+
         scanLoopRef.current=window.setInterval(async()=>{
           if(cancelled||busy||!videoRef.current||videoRef.current.readyState<2)return;
+          const vw=videoRef.current.videoWidth;
+          const vh=videoRef.current.videoHeight;
+          if(!vw||!vh)return;
           busy=true;
+          tick++;
           try{
+            // 1. Önce doğrudan video veya merkez kesit üzerinde donanım BarcodeDetector dene
             if(nativeDetector){
-              const barcodes=await nativeDetector.detect(videoRef.current);
-              if(barcodes&&barcodes.length>0&&barcodes[0].rawValue){
-                handleBarcodeRef.current(barcodes[0].rawValue);
+              try{
+                const res=await nativeDetector.detect(videoRef.current);
+                if(res&&res.length>0&&res[0].rawValue){
+                  handleBarcodeRef.current(res[0].rawValue);
+                  busy=false;
+                  return;
+                }
+              }catch{}
+            }
+
+            // 2. Her döngüde merkezdeki barkod şeridini yüksek kontrastla canvas'a al ve Html5Qrcode/BarcodeDetector ile çöz
+            if(ctx){
+              const cropW=Math.floor(vw*0.88);
+              const cropH=Math.floor(vh*0.48);
+              const sx=Math.floor((vw-cropW)/2);
+              const sy=Math.floor((vh-cropH)/2);
+              canvas.width=cropW;
+              canvas.height=cropH;
+              // Barkod çizgilerini keskinleştirmek için hafif kontrast artışı
+              ctx.filter=tick%2===0?'contrast(1.35) brightness(1.05)':'none';
+              ctx.drawImage(videoRef.current,sx,sy,cropW,cropH,0,0,cropW,cropH);
+
+              if(nativeDetector){
+                try{
+                  const res2=await nativeDetector.detect(canvas);
+                  if(res2&&res2.length>0&&res2[0].rawValue){
+                    handleBarcodeRef.current(res2[0].rawValue);
+                    busy=false;
+                    return;
+                  }
+                }catch{}
               }
-            }else if(zxingReader&&canvas&&ctx){
-              const vw=videoRef.current.videoWidth;
-              const vh=videoRef.current.videoHeight;
-              if(vw>0&&vh>0){
-                // Sadece merkezdeki barkod şeridini (80% genişlik, 45% yükseklik) tarayarak 3 kat daha hızlı okuma
-                const cropW=Math.floor(vw*0.85);
-                const cropH=Math.floor(vh*0.45);
-                const startX=Math.floor((vw-cropW)/2);
-                const startY=Math.floor((vh-cropH)/2);
-                canvas.width=cropW;
-                canvas.height=cropH;
-                ctx.drawImage(videoRef.current,startX,startY,cropW,cropH,0,0,cropW,cropH);
-                const imageData=ctx.getImageData(0,0,cropW,cropH);
-                const ZXing=(window as any).ZXing;
-                const source=new ZXing.RGBLuminanceSource(imageData.data,cropW,cropH);
-                const bitmap=new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(source));
-                const result=zxingReader.decode(bitmap);
-                if(result&&result.getText()){
-                  handleBarcodeRef.current(result.getText());
+
+              // iOS Safari veya BarcodeDetector'ün kaçırdığı kareler için Blob -> Html5Qrcode.scanFile
+              const blob:Blob|null=await new Promise(r=>canvas.toBlob(b=>r(b),'image/jpeg',0.92));
+              if(blob&&!cancelled){
+                const code=await decodeFileOrBlob(blob);
+                if(code&&!cancelled){
+                  handleBarcodeRef.current(code);
                 }
               }
             }
           }catch{
-            // O karede barkod bulunamadıysa sessizce sonraki kareye geç
           }finally{
             busy=false;
           }
-        },90); // Saniyede ~11 kez ultra hızlı tarama
+        },180);
       }catch{
         if(!cancelled){
           setScannerError('Canlı kameraya erişilemedi. Lütfen kamera izni verin veya aşağıdaki "📸 Fotoğraf Çekerek Okut" butonunu kullanın.');
@@ -900,7 +970,7 @@ export default function App(){
       cancelled=true;
       stopCameraStream();
     };
-  },[scannerOpen]);
+  },[scannerOpen,selectedCameraId]);
 
   // ── Barkod okuyucu ────────────────────────────────────────────────────
   useEffect(()=>{
@@ -4609,8 +4679,39 @@ export default function App(){
                 <button type="button" onClick={closeBarcodeScanner} className="text-zinc-400 hover:text-white bg-zinc-800 p-2 rounded-xl"><X size={18}/></button>
               </div>
             </div>
-            <div className="p-5 space-y-3.5">
-              <div className="w-full rounded-2xl overflow-hidden bg-black h-[240px] border-2 border-emerald-500/50 relative flex items-center justify-center">
+            <div className="p-5 space-y-3">
+              {/* Kamera Lens Seçici & Yakınlaştırma (Zoom) - Geniş açı bulanıklığını önler */}
+              <div className="flex items-center gap-2">
+                {cameraDevices.length>1&&(
+                  <select
+                    value={selectedCameraId}
+                    onChange={e=>setSelectedCameraId(e.target.value)}
+                    className="flex-1 bg-zinc-950 border border-zinc-700 text-zinc-200 px-3 py-2 rounded-xl text-xs font-bold outline-none focus:border-emerald-500 truncate"
+                  >
+                    <option value="">📷 Otomatik Arka Kamera</option>
+                    {cameraDevices.map((d,idx)=>(
+                      <option key={d.deviceId} value={d.deviceId}>{d.label||(`Kamera ${idx+1}`)}</option>
+                    ))}
+                  </select>
+                )}
+                {maxCameraZoom>1&&(
+                  <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-800 px-2.5 py-1.5 rounded-xl shrink-0">
+                    <span className="text-[10px] font-bold text-zinc-400">Zoom:</span>
+                    {[1,1.5,2].filter(z=>z<=maxCameraZoom).map(z=>(
+                      <button
+                        key={z}
+                        type="button"
+                        onClick={()=>handleZoomChange(z)}
+                        className={'px-2 py-0.5 rounded-lg text-[11px] font-black transition-all '+(Math.abs(cameraZoom-z)<0.2?'bg-emerald-500 text-zinc-950':'bg-zinc-800 text-zinc-300')}
+                      >
+                        {z}x
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="w-full rounded-2xl overflow-hidden bg-black h-[230px] border-2 border-emerald-500/50 relative flex items-center justify-center">
                 <video
                   ref={videoRef}
                   playsInline
@@ -4620,12 +4721,12 @@ export default function App(){
                 />
                 {/* Kırmızı Lazer Hedef Çizgisi ve Çerçevesi */}
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                  <div className="w-[84%] h-[46%] border-2 border-emerald-400/80 rounded-2xl relative shadow-[0_0_0_9999px_rgba(0,0,0,0.38)]">
+                  <div className="w-[86%] h-[48%] border-2 border-emerald-400/80 rounded-2xl relative shadow-[0_0_0_9999px_rgba(0,0,0,0.42)]">
                     <div className="absolute left-2 right-2 top-1/2 -translate-y-1/2 h-0.5 bg-red-500 shadow-[0_0_8px_#ef4444]"/>
                   </div>
                 </div>
               </div>
-              <p className="text-[11px] text-zinc-400 text-center">Barkodu kırmızı çizgiye hizalayın (15–20 cm mesafe). Çok küçük veya parlak barkodlar için aşağıdaki net fotoğraf butonunu da kullanabilirsiniz.</p>
+              <p className="text-[11px] text-zinc-400 text-center">Görüntü bulanıksa yukarıdan <strong>1.5x / 2x Zoom</strong> seçin veya farklı arka kameraya geçin.</p>
               <label className="w-full bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 font-black py-3 px-4 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all">
                 <span>📸 Net Odaklamalı Fotoğraf Çekerek Okut</span>
                 <input type="file" accept="image/*" capture="environment" onChange={handlePhotoBarcodeScan} style={{display:'none'}}/>
@@ -4652,6 +4753,23 @@ export default function App(){
                   </button>
                 </div>
               )}
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={manualScanInput}
+                  onChange={e=>setManualScanInput(e.target.value)}
+                  onKeyDown={e=>{if(e.key==='Enter'&&manualScanInput.trim()){handleBarcodeRef.current(manualScanInput.trim());setManualScanInput('');}}}
+                  placeholder="Veya barkod numarasını buraya yazın..."
+                  className="flex-1 bg-zinc-950 border border-zinc-700 text-white px-3 py-2.5 rounded-xl text-xs font-bold outline-none focus:border-emerald-500"
+                />
+                <button
+                  type="button"
+                  onClick={()=>{if(manualScanInput.trim()){handleBarcodeRef.current(manualScanInput.trim());setManualScanInput('');}}}
+                  className="bg-emerald-500 text-zinc-950 px-4 py-2.5 rounded-xl font-black text-xs shrink-0"
+                >
+                  Ekle
+                </button>
+              </div>
               <button
                 type="button"
                 onClick={closeBarcodeScanner}
