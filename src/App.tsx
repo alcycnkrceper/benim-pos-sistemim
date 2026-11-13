@@ -164,6 +164,7 @@ const Toggle=({label,value,onChange}:{label:string;value:boolean;onChange:(v:boo
 const ALL_PERMISSIONS = [
   {key:'pos',group:'Satış',label:'Hızlı Satış (POS)',icon:'🛒'},
   {key:'sales.history',group:'Satış',label:'Son Fişler & Satış Geçmişi',icon:'🧾'},
+  {key:'sales.prices',group:'Satış',label:'Önceki Fişlerden Fiyat Gör',icon:'🏷️'},
   {key:'orders',group:'Satış',label:'Siparişli Satışlar',icon:'📦'},
   {key:'quotes',group:'Satış',label:'Teklifler',icon:'📝'},
   {key:'returns',group:'Satış',label:'İade & Değişim',icon:'🔄'},
@@ -512,6 +513,15 @@ export default function App(){
       await (track as any).applyConstraints({advanced:[{zoom:newZoom}]});
     }catch{}
   };
+  // ── Önceki Fişlerden Fiyat Görebilme & Hızlı Sorgu ────────────────────
+  const [pastPriceProductSearch,setPastPriceProductSearch]=useState('');
+  const [pastPriceCustomerFilter,setPastPriceCustomerFilter]=useState('all');
+  const [pastPriceMethodFilter,setPastPriceMethodFilter]=useState('all');
+  const [pastPriceStartDate,setPastPriceStartDate]=useState('');
+  const [pastPriceEndDate,setPastPriceEndDate]=useState('');
+  const [pastPriceViewMode,setPastPriceViewMode]=useState<'summary'|'lines'>('lines');
+  const [quickPriceModalItem,setQuickPriceModalItem]=useState<any>(null);
+  const [quickPriceCustomerFilter,setQuickPriceCustomerFilter]=useState('all');
   // ── Son Fişler & Fiş Düzenleme ────────────────────────────────────────
   const [saleHistorySearch,setSaleHistorySearch]=useState('');
   const [saleHistoryMethod,setSaleHistoryMethod]=useState('all');
@@ -1070,6 +1080,7 @@ export default function App(){
     if(action.startsWith('rapor.'))return perms.includes(action.replace('rapor.','reports.'));
     if(action.startsWith('stock'))return perms.includes(action)||perms.includes('stock');
     if(action==='sales.history')return perms.includes('sales.history')||perms.includes('pos');
+    if(action==='sales.prices')return perms.includes('sales.prices')||perms.includes('pos');
     return perms.includes(action);
   };
   const stockColor=(stock:number)=>{
@@ -2002,6 +2013,7 @@ export default function App(){
         <nav className="p-3 flex-1 overflow-y-auto space-y-0.5">
           {[
             {p:'pos',icon:<ShoppingCart size={15}/>,label:'Hızlı Satış',perm:'pos'},
+            {p:'sales.prices',icon:<BadgePercent size={15}/>,label:'Fişlerden Fiyat Gör',perm:'sales.prices'},
             {p:'sales.history',icon:<Receipt size={15}/>,label:'Son Fişler & Geçmiş',perm:'sales.history'},
             {p:'orders',icon:<ShoppingBag size={15}/>,label:'Siparişli Satışlar',perm:'orders',badge:orders.filter(o=>o.status==='bekliyor'||o.status==='hazirlaniyor').length||null},
             {p:'quotes',icon:<FileEdit size={15}/>,label:'Teklifler',perm:'quotes',badge2:quotes.filter(q=>q.status==='beklemede').length||null},
@@ -2151,6 +2163,11 @@ export default function App(){
                 <div className="relative flex-1 min-w-[200px]"><Search className="absolute left-3.5 top-3 text-zinc-500" size={16}/><input type="text" value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Ürün adı veya barkod..." className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl py-3 pl-11 pr-4 outline-none focus:border-emerald-500 text-sm"/></div>
                 <button type="button" onClick={()=>openBarcodeScanner('pos')} className="px-4 py-3 rounded-xl font-black text-sm flex items-center gap-2 bg-emerald-500 text-zinc-950 hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/20"><span className="text-base leading-none">📷</span> Barkod Okut</button>
                 <button onClick={()=>setActivePage('sales.history')} className="px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-2 border bg-zinc-900 text-emerald-400 border-zinc-800 hover:border-emerald-500 hover:bg-emerald-500/10 transition-all"><Receipt size={15}/> Son Fişler ({sales.filter(s=>s.method!=='Tahsilat').length})</button>
+                <button onClick={()=>{
+                  const selCust=customers.find((c:any)=>c.id===(orderMode?orderCustomer:cartCustomer));
+                  if(selCust)setPastPriceCustomerFilter(selCust.name);
+                  setActivePage('sales.prices');
+                }} className="px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-2 border bg-zinc-900 text-amber-400 border-zinc-800 hover:border-amber-500 hover:bg-amber-500/10 transition-all"><BadgePercent size={15}/> Önceki Fiyatlar</button>
                 {orderMode&&(
                   <button onClick={()=>setOrderMode(false)} className="px-4 py-3 rounded-xl font-black text-sm flex items-center gap-2 border bg-orange-500 text-zinc-950 border-orange-500 hover:bg-orange-400 transition-all"><X size={15}/> Sipariş Modundan Çık</button>
                 )}
@@ -2200,17 +2217,31 @@ export default function App(){
                       <button onClick={()=>setCart(cart.filter((i:any)=>i.id!==item.id))} className="text-red-900 hover:text-red-500 p-0.5 shrink-0"><Trash2 size={14}/></button>
                     </div>
                     <div className="flex items-center justify-between gap-2 pt-1 border-t border-zinc-900">
-                      <div className="flex items-center gap-1.5 bg-zinc-900 px-2.5 py-1 rounded-xl border border-zinc-800 focus-within:border-emerald-500">
-                        <span className="text-[10px] font-bold text-zinc-500 uppercase">Fiyat ₺</span>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={item.grossPrice??''}
-                          onChange={e=>setCart(cart.map((i:any)=>i.id===item.id?{...i,grossPrice:e.target.value===''?'':parseFloat(e.target.value)}:i))}
-                          className="w-20 bg-transparent text-emerald-400 font-black text-sm outline-none text-right"
-                          placeholder="0.00"
-                        />
+                      <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 bg-zinc-900 px-2.5 py-1 rounded-xl border border-zinc-800 focus-within:border-emerald-500">
+                          <span className="text-[10px] font-bold text-zinc-500 uppercase">Fiyat ₺</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={item.grossPrice??''}
+                            onChange={e=>setCart(cart.map((i:any)=>i.id===item.id?{...i,grossPrice:e.target.value===''?'':parseFloat(e.target.value)}:i))}
+                            className="w-20 bg-transparent text-emerald-400 font-black text-sm outline-none text-right"
+                            placeholder="0.00"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={()=>{
+                            const activeCustName=customers.find((c:any)=>c.id===(orderMode?orderCustomer:cartCustomer))?.name||'all';
+                            setQuickPriceCustomerFilter(activeCustName);
+                            setQuickPriceModalItem({target:'pos',item});
+                          }}
+                          className="bg-amber-500/15 hover:bg-amber-500 hover:text-zinc-950 text-amber-400 border border-amber-500/30 px-2 py-1.5 rounded-xl text-[10px] font-black flex items-center gap-1 transition-all shrink-0"
+                          title="Bu ürünün önceki fişlerdeki satış fiyatlarını gör ve uygula"
+                        >
+                          <BadgePercent size={12}/> Eski Fiyat
+                        </button>
                       </div>
                       <div className="flex items-center gap-1.5 bg-zinc-900 p-1 rounded-xl border border-zinc-800 focus-within:border-emerald-500">
                         <button type="button" onClick={()=>setCart(cart.map((i:any)=>i.id===item.id?{...i,qty:Math.max(1,(Number(i.qty)||1)-1)}:i))} className="text-zinc-500 hover:text-emerald-500 p-0.5"><MinusCircle size={18}/></button>
@@ -2305,6 +2336,449 @@ export default function App(){
                 )}
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ═══ ÖNCEKİ FİŞLERDEN FİYAT GÖREBİLME EKRANI ════════════════════ */}
+        {activePage==='sales.prices'&&(
+          <div className="p-7 w-full overflow-y-auto">
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+              <div>
+                <h2 className="text-3xl font-black flex items-center gap-3"><BadgePercent className="text-amber-400"/> Önceki Fişlerden Fiyat Gör</h2>
+                <p className="text-zinc-500 text-sm mt-0.5">Hangi ürünün hangi müşteriye, hangi tarihte ve hangi fişte kaç ₺'den satıldığını anında sorgulayın; tek tıkla eski fiyattan sepete ekleyin</p>
+              </div>
+              <div className="flex items-center gap-2.5">
+                <div className="flex bg-zinc-900 border border-zinc-800 p-1 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={()=>setPastPriceViewMode('lines')}
+                    className={'px-3.5 py-2 rounded-lg text-xs font-black transition-all '+(pastPriceViewMode==='lines'?'bg-amber-400 text-zinc-950':'text-zinc-400 hover:text-white')}
+                  >
+                    📋 Fiş Satırları (Detaylı)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={()=>setPastPriceViewMode('summary')}
+                    className={'px-3.5 py-2 rounded-lg text-xs font-black transition-all '+(pastPriceViewMode==='summary'?'bg-amber-400 text-zinc-950':'text-zinc-400 hover:text-white')}
+                  >
+                    📦 Ürün Bazlı Fiyat Özeti
+                  </button>
+                </div>
+                <button onClick={()=>setActivePage('pos')} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-5 py-2.5 rounded-xl font-black flex items-center gap-2 text-sm shadow-lg shadow-emerald-500/20">
+                  <ShoppingCart size={16}/> Hızlı Satışa Dön {cart.length>0?`(${cart.length})`:''}
+                </button>
+              </div>
+            </div>
+
+            {/* Filtre ve Arama Paneli */}
+            <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-4 mb-6 space-y-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="relative flex-1 min-w-[240px]">
+                  <Search className="absolute left-3.5 top-3 text-zinc-500" size={16}/>
+                  <input
+                    value={pastPriceProductSearch}
+                    onChange={e=>setPastPriceProductSearch(e.target.value)}
+                    placeholder="Ürün adı, barkod veya fiş no (#...) yazın..."
+                    className="w-full bg-zinc-950 border border-zinc-700 text-white pl-10 pr-4 py-2.5 rounded-xl outline-none focus:border-amber-400 text-sm font-medium"
+                  />
+                </div>
+                <select
+                  value={pastPriceCustomerFilter}
+                  onChange={e=>setPastPriceCustomerFilter(e.target.value)}
+                  className="bg-zinc-950 border border-zinc-700 text-white px-3.5 py-2.5 rounded-xl text-sm font-bold outline-none focus:border-amber-400 min-w-[210px]"
+                >
+                  <option value="all">👥 Tüm Müşteriler (Genel)</option>
+                  <option value="Perakende Müşteri">🛒 Perakende Müşteri</option>
+                  {customers.map(c=><option key={c.id} value={c.name}>{c.name}</option>)}
+                </select>
+                <div className="flex gap-1.5 flex-wrap">
+                  {(['all','Nakit','Kart','Veresiye'] as const).map(m=>(
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={()=>setPastPriceMethodFilter(m)}
+                      className={'px-3 py-2.5 rounded-xl text-xs font-bold border transition-all '+(pastPriceMethodFilter===m?'bg-amber-400 text-zinc-950 border-amber-400':'bg-zinc-950 text-zinc-400 border-zinc-800 hover:border-zinc-700')}
+                    >
+                      {m==='all'?'Tüm Yöntemler':m}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="date"
+                    value={pastPriceStartDate}
+                    onChange={e=>setPastPriceStartDate(e.target.value)}
+                    className="bg-zinc-950 border border-zinc-700 text-white px-3 py-2 rounded-xl text-xs outline-none focus:border-amber-400"
+                    title="Başlangıç Tarihi"
+                  />
+                  <span className="text-zinc-600 text-xs">—</span>
+                  <input
+                    type="date"
+                    value={pastPriceEndDate}
+                    onChange={e=>setPastPriceEndDate(e.target.value)}
+                    className="bg-zinc-950 border border-zinc-700 text-white px-3 py-2 rounded-xl text-xs outline-none focus:border-amber-400"
+                    title="Bitiş Tarihi"
+                  />
+                </div>
+                {(pastPriceProductSearch||pastPriceCustomerFilter!=='all'||pastPriceMethodFilter!=='all'||pastPriceStartDate||pastPriceEndDate)&&(
+                  <button
+                    type="button"
+                    onClick={()=>{
+                      setPastPriceProductSearch('');
+                      setPastPriceCustomerFilter('all');
+                      setPastPriceMethodFilter('all');
+                      setPastPriceStartDate('');
+                      setPastPriceEndDate('');
+                    }}
+                    className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3.5 py-2.5 rounded-xl text-xs font-bold border border-zinc-700 flex items-center gap-1"
+                  >
+                    <X size={13}/> Filtreyi Sıfırla
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {(()=>{
+              const q=pastPriceProductSearch.trim().toLowerCase();
+              const validSales=[...sales]
+                .filter(s=>s.method!=='Tahsilat')
+                .sort((a,b)=>parseDT(b.date).getTime()-parseDT(a.date).getTime());
+
+              // Tüm fiş satırlarını düzleştir
+              const allLines:any[]=[];
+              validSales.forEach(s=>{
+                if(pastPriceCustomerFilter!=='all'&&(s.customerName||'Perakende Müşteri')!==pastPriceCustomerFilter)return;
+                if(pastPriceMethodFilter!=='all'&&s.method!==pastPriceMethodFilter)return;
+                const sDate=parseDT(s.date);
+                if(pastPriceStartDate&&sDate<new Date(pastPriceStartDate))return;
+                if(pastPriceEndDate){
+                  const endD=new Date(pastPriceEndDate);
+                  endD.setHours(23,59,59);
+                  if(sDate>endD)return;
+                }
+                const subT=Number(s.subTotal)||Number(s.total)||0;
+                const discAmt=Number(s.discountAmount)||0;
+                const discRatio=subT>0?Math.max(0,Math.min(1,(subT-discAmt)/subT)):1;
+
+                (s.items||[]).forEach((it:any,idx:number)=>{
+                  const itemName=String(it.name||'').trim();
+                  if(!itemName)return;
+                  const matchedProd=products.find(p=>p.id===it.id||String(p.name||'').toLowerCase()===itemName.toLowerCase());
+                  const barcodeStr=String(it.barcode||matchedProd?.barcode||'');
+                  const saleIdShort=String(s.id||'').slice(-6).toLowerCase();
+                  if(q){
+                    const matchName=itemName.toLowerCase().includes(q);
+                    const matchBarcode=barcodeStr.toLowerCase().includes(q);
+                    const matchCust=String(s.customerName||'').toLowerCase().includes(q);
+                    const matchId=saleIdShort.includes(q)||String(s.id||'').toLowerCase().includes(q);
+                    if(!matchName&&!matchBarcode&&!matchCust&&!matchId)return;
+                  }
+                  const unitGross=Number(it.grossPrice)||0;
+                  const netEffectiveUnit=parseFloat((unitGross*discRatio).toFixed(2));
+                  const currentCatalogPrice=matchedProd?Number(matchedProd.grossPrice)||0:null;
+                  allLines.push({
+                    key:`${s.id}-${idx}`,
+                    sale:s,
+                    saleId:s.id,
+                    date:s.date,
+                    customerName:s.customerName||'Perakende Müşteri',
+                    method:s.method||'Nakit',
+                    staffName:s.staffName||'',
+                    productId:matchedProd?.id||it.id||'',
+                    productObj:matchedProd||it,
+                    itemName,
+                    barcode:barcodeStr,
+                    qty:Number(it.qty)||1,
+                    unitGross,
+                    netEffectiveUnit,
+                    hasReceiptDiscount:discAmt>0,
+                    receiptDiscountPct:s.discountPct||0,
+                    currentCatalogPrice,
+                  });
+                });
+              });
+
+              // İstatistikler
+              const uniqueProdCount=new Set(allLines.map(l=>l.itemName.toLowerCase())).size;
+              const minPrice=allLines.length>0?Math.min(...allLines.map(l=>l.unitGross)):0;
+              const maxPrice=allLines.length>0?Math.max(...allLines.map(l=>l.unitGross)):0;
+              const lastSoldPrice=allLines.length>0?allLines[0].unitGross:0;
+
+              // Ürün bazlı özet tablosu
+              const summaryMap:Record<string,{
+                itemName:string;
+                barcode:string;
+                productObj:any;
+                currentCatalogPrice:number|null;
+                lastPrice:number;
+                lastDate:string;
+                lastCustomer:string;
+                minPrice:number;
+                maxPrice:number;
+                avgPrice:number;
+                totalQty:number;
+                saleCount:number;
+                sumPrice:number;
+                recentRecords:any[];
+              }>={};
+
+              allLines.forEach(l=>{
+                const k=l.itemName.toLowerCase();
+                if(!summaryMap[k]){
+                  summaryMap[k]={
+                    itemName:l.itemName,
+                    barcode:l.barcode,
+                    productObj:l.productObj,
+                    currentCatalogPrice:l.currentCatalogPrice,
+                    lastPrice:l.unitGross,
+                    lastDate:l.date,
+                    lastCustomer:l.customerName,
+                    minPrice:l.unitGross,
+                    maxPrice:l.unitGross,
+                    avgPrice:l.unitGross,
+                    totalQty:0,
+                    saleCount:0,
+                    sumPrice:0,
+                    recentRecords:[],
+                  };
+                }
+                const g=summaryMap[k];
+                g.minPrice=Math.min(g.minPrice,l.unitGross);
+                g.maxPrice=Math.max(g.maxPrice,l.unitGross);
+                g.totalQty+=l.qty;
+                g.saleCount+=1;
+                g.sumPrice+=l.unitGross;
+                g.avgPrice=g.sumPrice/g.saleCount;
+                if(g.recentRecords.length<5)g.recentRecords.push(l);
+              });
+              const summaryList=Object.values(summaryMap);
+
+              const applyPriceToPos=(lineProduct:any,priceToUse:number)=>{
+                const prodId=lineProduct?.id||('MAN-'+Date.now());
+                setCart(prev=>{
+                  const ex=prev.find((i:any)=>i.id===prodId||String(i.name||'').toLowerCase()===String(lineProduct?.name||'').toLowerCase());
+                  if(ex){
+                    return prev.map((i:any)=>(i.id===ex.id)?{...i,grossPrice:priceToUse}:i);
+                  }
+                  return [...prev,{
+                    id:prodId,
+                    name:lineProduct?.name||'Ürün',
+                    barcode:lineProduct?.barcode||'',
+                    unit:lineProduct?.unit||'Adet',
+                    costPrice:Number(lineProduct?.costPrice)||0,
+                    taxRate:Number(lineProduct?.taxRate)||20,
+                    grossPrice:priceToUse,
+                    qty:1
+                  }];
+                });
+              };
+
+              return(
+                <div className="space-y-5">
+                  {/* Özet Kartları */}
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl">
+                      <p className="text-zinc-500 text-xs font-bold uppercase mb-1">Bulunan Fiş Satırı</p>
+                      <p className="text-2xl font-black text-white">{allLines.length} <span className="text-xs font-bold text-zinc-500">({uniqueProdCount} çeşit ürün)</span></p>
+                    </div>
+                    <div className="bg-amber-500/10 border border-amber-500/30 p-4 rounded-2xl">
+                      <p className="text-amber-400 text-xs font-bold uppercase mb-1">Son Satış Fiyatı</p>
+                      <p className="text-2xl font-black text-amber-400">₺{lastSoldPrice.toFixed(2)}</p>
+                      {allLines[0]&&<p className="text-zinc-500 text-[11px] mt-0.5 truncate">{allLines[0].itemName} ({allLines[0].customerName})</p>}
+                    </div>
+                    <div className="bg-emerald-500/10 border border-emerald-500/30 p-4 rounded-2xl">
+                      <p className="text-emerald-400 text-xs font-bold uppercase mb-1">En Düşük Verilen Fiyat</p>
+                      <p className="text-2xl font-black text-emerald-400">₺{minPrice.toFixed(2)}</p>
+                    </div>
+                    <div className="bg-blue-500/10 border border-blue-500/30 p-4 rounded-2xl">
+                      <p className="text-blue-400 text-xs font-bold uppercase mb-1">En Yüksek Verilen Fiyat</p>
+                      <p className="text-2xl font-black text-blue-400">₺{maxPrice.toFixed(2)}</p>
+                    </div>
+                  </div>
+
+                  {pastPriceViewMode==='lines'?(
+                    <div className="bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-sm">
+                          <thead className="bg-zinc-950 text-zinc-500 text-xs font-bold uppercase tracking-wider">
+                            <tr>
+                              <th className="p-4">Tarih / Fiş No</th>
+                              <th className="p-4">Müşteri (Cari)</th>
+                              <th className="p-4">Ürün Adı</th>
+                              <th className="p-4 text-center">Adet</th>
+                              <th className="p-4 text-right text-amber-400">Fişteki Birim Fiyat</th>
+                              <th className="p-4 text-right">Güncel Liste Fiyatı</th>
+                              <th className="p-4 text-center">Fark</th>
+                              <th className="p-4 text-center">Hızlı İşlem</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-800/60">
+                            {allLines.slice(0,250).map(l=>{
+                              const diff=(l.currentCatalogPrice!==null)?(l.unitGross-l.currentCatalogPrice):null;
+                              return(
+                                <tr key={l.key} className="hover:bg-zinc-800/35 transition-colors">
+                                  <td className="p-4 whitespace-nowrap">
+                                    <div className="font-bold text-zinc-200 text-xs">{l.date}</div>
+                                    <div className="flex items-center gap-1.5 mt-0.5">
+                                      <span className="font-mono text-[11px] text-emerald-400 font-black">#{String(l.saleId||'').slice(-6).toUpperCase()}</span>
+                                      <span className={'text-[10px] font-bold px-2 py-0.5 rounded-full '+(l.method==='Nakit'?'bg-emerald-500/20 text-emerald-400':l.method==='Kart'?'bg-blue-500/20 text-blue-400':'bg-orange-500/20 text-orange-400')}>{l.method}</span>
+                                    </div>
+                                  </td>
+                                  <td className="p-4">
+                                    <button
+                                      type="button"
+                                      onClick={()=>setPastPriceCustomerFilter(l.customerName)}
+                                      className="font-black text-white hover:text-amber-400 text-left transition-colors"
+                                      title="Sadece bu müşterinin geçmiş fiyatlarını filtrele"
+                                    >
+                                      {l.customerName}
+                                    </button>
+                                    {l.staffName&&<div className="text-[10px] text-zinc-500">Kasiyer: {l.staffName}</div>}
+                                  </td>
+                                  <td className="p-4">
+                                    <button
+                                      type="button"
+                                      onClick={()=>setPastPriceProductSearch(l.itemName)}
+                                      className="font-bold text-emerald-400 hover:underline text-left"
+                                      title="Sadece bu ürünün geçmiş fiyatlarını filtrele"
+                                    >
+                                      {l.itemName}
+                                    </button>
+                                    {l.barcode&&<div className="text-[10px] font-mono text-zinc-500">{l.barcode}</div>}
+                                  </td>
+                                  <td className="p-4 text-center">
+                                    <span className="bg-zinc-800 text-white font-black text-xs px-2.5 py-1 rounded-lg">×{l.qty}</span>
+                                  </td>
+                                  <td className="p-4 text-right whitespace-nowrap">
+                                    <div className="text-lg font-black text-amber-400 font-mono">₺{l.unitGross.toFixed(2)}</div>
+                                    {l.hasReceiptDiscount&&(
+                                      <div className="text-[10px] text-emerald-400 font-bold" title="Fiş genel iskontosu düşüldükten sonraki net birim fiyat">
+                                        İsk. Sonrası: ₺{l.netEffectiveUnit.toFixed(2)}
+                                      </div>
+                                    )}
+                                  </td>
+                                  <td className="p-4 text-right whitespace-nowrap font-mono text-zinc-300 font-bold">
+                                    {l.currentCatalogPrice!==null?`₺${l.currentCatalogPrice.toFixed(2)}`:'—'}
+                                  </td>
+                                  <td className="p-4 text-center whitespace-nowrap">
+                                    {diff!==null?(
+                                      <span className={'text-xs font-black px-2 py-1 rounded-lg '+(Math.abs(diff)<0.01?'bg-zinc-800 text-zinc-400':diff<0?'bg-amber-500/15 text-amber-400':'bg-emerald-500/15 text-emerald-400')}>
+                                        {Math.abs(diff)<0.01?'Aynı':(diff>0?'+':'')+diff.toFixed(2)+' ₺'}
+                                      </span>
+                                    ):<span className="text-zinc-600 text-xs">—</span>}
+                                  </td>
+                                  <td className="p-4 text-center whitespace-nowrap">
+                                    <div className="flex items-center justify-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={()=>{
+                                          applyPriceToPos({id:l.productId,name:l.itemName,barcode:l.barcode,...l.productObj},l.unitGross);
+                                          setActivePage('pos');
+                                        }}
+                                        className="bg-amber-400 hover:bg-amber-300 text-zinc-950 px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1 shadow"
+                                        title="Bu ürünü bu fişteki eski fiyatıyla (₺) POS sepetine ekle veya sepetteki fiyatını güncelle"
+                                      >
+                                        <ShoppingCart size={12}/> Bu Fiyattan Sat (₺{l.unitGross.toFixed(2)})
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={()=>openEditSale(l.sale)}
+                                        className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-2.5 py-1.5 rounded-xl text-xs font-bold border border-zinc-700 flex items-center gap-1"
+                                        title="Fişin tamamını gör / düzenle"
+                                      >
+                                        <Eye size={12}/> Fişi Aç
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                            {allLines.length===0&&(
+                              <tr>
+                                <td colSpan={8} className="p-12 text-center text-zinc-500 font-bold">
+                                  Aradığınız kriterlere uygun geçmiş fiş satırı bulunamadı.
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ):(
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                      {summaryList.map((g,idx)=>(
+                        <div key={idx} className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 space-y-4 hover:border-zinc-700 transition-all">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <h3 className="font-black text-white text-lg">{g.itemName}</h3>
+                              <p className="text-zinc-500 text-xs mt-0.5">
+                                Toplam <strong>{g.saleCount}</strong> fişte <strong>{g.totalQty}</strong> adet satıldı
+                                {g.currentCatalogPrice!==null&&<span> · Güncel Liste: <strong className="text-white">₺{g.currentCatalogPrice.toFixed(2)}</strong></span>}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={()=>{
+                                applyPriceToPos({name:g.itemName,barcode:g.barcode,...g.productObj},g.lastPrice);
+                                setActivePage('pos');
+                              }}
+                              className="bg-amber-400 hover:bg-amber-300 text-zinc-950 px-3.5 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 shrink-0 shadow"
+                            >
+                              <ShoppingCart size={13}/> Son Fiyattan Ekle (₺{g.lastPrice.toFixed(2)})
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-4 gap-2 bg-zinc-950 border border-zinc-800 rounded-2xl p-3 text-center">
+                            <div>
+                              <p className="text-[10px] font-bold text-zinc-500 uppercase">Son Satış</p>
+                              <p className="text-base font-black text-amber-400">₺{g.lastPrice.toFixed(2)}</p>
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-bold text-zinc-500 uppercase">En Düşük</p>
+                              <p className="text-base font-black text-emerald-400">₺{g.minPrice.toFixed(2)}</p>
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-bold text-zinc-500 uppercase">En Yüksek</p>
+                              <p className="text-base font-black text-blue-400">₺{g.maxPrice.toFixed(2)}</p>
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-bold text-zinc-500 uppercase">Ortalama</p>
+                              <p className="text-base font-black text-white">₺{g.avgPrice.toFixed(2)}</p>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <p className="text-[11px] font-bold text-zinc-500 uppercase">Son Satıldığı Fişler</p>
+                            {g.recentRecords.map((r:any,ri:number)=>(
+                              <div key={ri} className="flex items-center justify-between bg-zinc-950/70 border border-zinc-800/80 px-3 py-2 rounded-xl text-xs">
+                                <div className="min-w-0 flex-1">
+                                  <span className="font-bold text-zinc-200">{r.customerName}</span>
+                                  <span className="text-zinc-500 ml-2">{r.date?.split(' ')[0]} · #{String(r.saleId||'').slice(-5).toUpperCase()}</span>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <span className="text-zinc-400">×{r.qty}</span>
+                                  <span className="font-black text-amber-400 text-sm">₺{r.unitGross.toFixed(2)}</span>
+                                  <button
+                                    type="button"
+                                    onClick={()=>{
+                                      applyPriceToPos({name:g.itemName,barcode:g.barcode,...g.productObj},r.unitGross);
+                                      setActivePage('pos');
+                                    }}
+                                    className="bg-zinc-800 hover:bg-amber-400 hover:text-zinc-950 text-amber-400 px-2 py-1 rounded-lg font-black text-[10px] border border-zinc-700"
+                                  >
+                                    Uygula
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -2595,17 +3069,31 @@ export default function App(){
                       <button onClick={()=>setQuoteDraft(quoteDraft.filter((i:any)=>i.id!==item.id))} className="text-red-900 hover:text-red-500 p-0.5 shrink-0"><Trash2 size={14}/></button>
                     </div>
                     <div className="flex items-center justify-between gap-2 pt-1 border-t border-zinc-900">
-                      <div className="flex items-center gap-1.5 bg-zinc-900 px-2.5 py-1 rounded-xl border border-zinc-800 focus-within:border-purple-500">
-                        <span className="text-[10px] font-bold text-zinc-500 uppercase">Fiyat ₺</span>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={item.grossPrice??''}
-                          onChange={e=>setQuoteDraft(quoteDraft.map((i:any)=>i.id===item.id?{...i,grossPrice:e.target.value===''?'':parseFloat(e.target.value)}:i))}
-                          className="w-20 bg-transparent text-purple-400 font-black text-sm outline-none text-right"
-                          placeholder="0.00"
-                        />
+                      <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 bg-zinc-900 px-2.5 py-1 rounded-xl border border-zinc-800 focus-within:border-purple-500">
+                          <span className="text-[10px] font-bold text-zinc-500 uppercase">Fiyat ₺</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={item.grossPrice??''}
+                            onChange={e=>setQuoteDraft(quoteDraft.map((i:any)=>i.id===item.id?{...i,grossPrice:e.target.value===''?'':parseFloat(e.target.value)}:i))}
+                            className="w-20 bg-transparent text-purple-400 font-black text-sm outline-none text-right"
+                            placeholder="0.00"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={()=>{
+                            const activeCustName=customers.find((c:any)=>c.id===quoteCustomer)?.name||'all';
+                            setQuickPriceCustomerFilter(activeCustName);
+                            setQuickPriceModalItem({target:'quote',item});
+                          }}
+                          className="bg-amber-500/15 hover:bg-amber-500 hover:text-zinc-950 text-amber-400 border border-amber-500/30 px-2 py-1.5 rounded-xl text-[10px] font-black flex items-center gap-1 transition-all shrink-0"
+                          title="Bu ürünün önceki fişlerdeki satış fiyatlarını gör ve teklife uygula"
+                        >
+                          <BadgePercent size={12}/> Eski Fiyat
+                        </button>
                       </div>
                       <div className="flex items-center gap-1.5 bg-zinc-900 p-1 rounded-xl border border-zinc-800 focus-within:border-purple-500">
                         <button type="button" onClick={()=>setQuoteDraft(quoteDraft.map((i:any)=>i.id===item.id?{...i,qty:Math.max(1,(Number(i.qty)||1)-1)}:i))} className="text-zinc-500 hover:text-purple-400 p-0.5"><MinusCircle size={17}/></button>
@@ -4657,6 +5145,149 @@ export default function App(){
           </div>
         </div>
       )}
+
+      {/* ═══ SEPETTE / TEKLİFTE HIZLI GEÇMİŞ FİŞ FİYATI GÖR & UYGULA MODALI ═══ */}
+      {quickPriceModalItem&&(()=>{
+        const targetItem=quickPriceModalItem.item;
+        const targetMode=quickPriceModalItem.target; // 'pos' | 'quote'
+        const itemNameLower=String(targetItem?.name||'').trim().toLowerCase();
+
+        // Bu ürüne ait geçmiş tüm satış satırlarını bul
+        const matchingRows:any[]=[];
+        [...sales]
+          .filter(s=>s.method!=='Tahsilat')
+          .sort((a,b)=>parseDT(b.date).getTime()-parseDT(a.date).getTime())
+          .forEach(s=>{
+            if(quickPriceCustomerFilter!=='all'&&(s.customerName||'Perakende Müşteri')!==quickPriceCustomerFilter)return;
+            const subT=Number(s.subTotal)||Number(s.total)||0;
+            const discAmt=Number(s.discountAmount)||0;
+            const discRatio=subT>0?Math.max(0,Math.min(1,(subT-discAmt)/subT)):1;
+            (s.items||[]).forEach((it:any)=>{
+              const itName=String(it.name||'').trim().toLowerCase();
+              if((targetItem.id&&it.id===targetItem.id)||itName===itemNameLower||(itemNameLower.length>2&&itName.includes(itemNameLower))){
+                const unitGross=Number(it.grossPrice)||0;
+                matchingRows.push({
+                  saleId:s.id,
+                  date:s.date,
+                  customerName:s.customerName||'Perakende Müşteri',
+                  method:s.method||'Nakit',
+                  qty:Number(it.qty)||1,
+                  unitGross,
+                  netEffectiveUnit:parseFloat((unitGross*discRatio).toFixed(2)),
+                  hasDiscount:discAmt>0,
+                });
+              }
+            });
+          });
+
+        const applyQuickPrice=(priceVal:number)=>{
+          if(targetMode==='pos'){
+            setCart(prev=>prev.map((i:any)=>i.id===targetItem.id?{...i,grossPrice:priceVal}:i));
+          }else{
+            setQuoteDraft(prev=>prev.map((i:any)=>i.id===targetItem.id?{...i,grossPrice:priceVal}:i));
+          }
+          setQuickPriceModalItem(null);
+        };
+
+        return(
+          <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-[480] p-4">
+            <div className="bg-zinc-900 border border-zinc-700 rounded-[32px] w-full max-w-xl max-h-[88vh] flex flex-col overflow-hidden shadow-2xl">
+              <div className="p-5 border-b border-zinc-800 bg-zinc-950/60 flex justify-between items-center shrink-0">
+                <div>
+                  <h3 className="text-lg font-black text-white flex items-center gap-2">
+                    <BadgePercent size={18} className="text-amber-400"/> Önceki Fiş Fiyatları
+                  </h3>
+                  <p className="text-amber-400 text-xs font-bold mt-0.5">{targetItem.name} <span className="text-zinc-500">· Şu anki fiyat: ₺{(Number(targetItem.grossPrice)||0).toFixed(2)}</span></p>
+                </div>
+                <button type="button" onClick={()=>setQuickPriceModalItem(null)} className="text-zinc-400 hover:text-white bg-zinc-800 p-2 rounded-xl"><X size={18}/></button>
+              </div>
+
+              <div className="p-4 border-b border-zinc-800 bg-zinc-950/30 flex items-center gap-2 shrink-0">
+                <span className="text-xs font-bold text-zinc-400 shrink-0">Müşteri Filtresi:</span>
+                <select
+                  value={quickPriceCustomerFilter}
+                  onChange={e=>setQuickPriceCustomerFilter(e.target.value)}
+                  className="flex-1 bg-zinc-950 border border-zinc-700 text-white px-3 py-2 rounded-xl text-xs font-bold outline-none focus:border-amber-400"
+                >
+                  <option value="all">👥 Tüm Müşterilerdeki Satış Fiyatları</option>
+                  <option value="Perakende Müşteri">🛒 Perakende Müşteri</option>
+                  {customers.map(c=><option key={c.id} value={c.name}>{c.name}</option>)}
+                </select>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                {matchingRows.length===0?(
+                  <div className="text-center py-12 text-zinc-500 font-bold text-sm">
+                    Bu ürün için seçili kriterde geçmiş fiş kaydı bulunamadı.
+                    {quickPriceCustomerFilter!=='all'&&(
+                      <div className="mt-3">
+                        <button type="button" onClick={()=>setQuickPriceCustomerFilter('all')} className="bg-zinc-800 hover:bg-zinc-700 text-amber-400 px-4 py-2 rounded-xl text-xs font-black border border-zinc-700">
+                          Tüm Müşterilerdeki Fiyatları Göster
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ):(
+                  matchingRows.slice(0,50).map((r,idx)=>(
+                    <div key={idx} className="bg-zinc-950 border border-zinc-800 hover:border-amber-500/40 rounded-2xl p-3.5 flex items-center justify-between gap-3 transition-all">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-black text-white text-sm">{r.customerName}</span>
+                          <span className="text-[10px] font-mono text-emerald-400 bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">#{String(r.saleId||'').slice(-6).toUpperCase()}</span>
+                          <span className="text-[10px] font-bold text-zinc-400 bg-zinc-900 px-2 py-0.5 rounded">{r.method}</span>
+                        </div>
+                        <div className="text-zinc-500 text-xs mt-1">
+                          📅 {r.date} · Adet: <strong className="text-zinc-300">×{r.qty}</strong>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className="text-lg font-black text-amber-400 font-mono">₺{r.unitGross.toFixed(2)}</div>
+                        {r.hasDiscount&&<div className="text-[10px] text-emerald-400 font-bold">Net: ₺{r.netEffectiveUnit.toFixed(2)}</div>}
+                      </div>
+                      <div className="flex flex-col gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={()=>applyQuickPrice(r.unitGross)}
+                          className="bg-amber-400 hover:bg-amber-300 text-zinc-950 px-3 py-2 rounded-xl text-xs font-black shadow"
+                        >
+                          ₺{r.unitGross.toFixed(2)} Uygula
+                        </button>
+                        {r.hasDiscount&&Math.abs(r.netEffectiveUnit-r.unitGross)>0.01&&(
+                          <button
+                            type="button"
+                            onClick={()=>applyQuickPrice(r.netEffectiveUnit)}
+                            className="bg-emerald-500/20 hover:bg-emerald-500 hover:text-zinc-950 text-emerald-400 px-2.5 py-1 rounded-lg text-[10px] font-black border border-emerald-500/30"
+                          >
+                            Net ₺{r.netEffectiveUnit.toFixed(2)}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="p-4 border-t border-zinc-800 bg-zinc-950/60 flex justify-between items-center shrink-0">
+                <button
+                  type="button"
+                  onClick={()=>{
+                    setPastPriceProductSearch(targetItem.name||'');
+                    setPastPriceCustomerFilter(quickPriceCustomerFilter);
+                    setQuickPriceModalItem(null);
+                    setActivePage('sales.prices');
+                  }}
+                  className="text-xs font-bold text-amber-400 hover:underline flex items-center gap-1"
+                >
+                  <BadgePercent size={13}/> Tam Ekran Fiyat Arama Sayfasına Git
+                </button>
+                <button type="button" onClick={()=>setQuickPriceModalItem(null)} className="bg-zinc-800 hover:bg-zinc-700 text-white px-5 py-2.5 rounded-xl text-xs font-bold border border-zinc-700">
+                  Kapat
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ═══ MOBİL KAMERA BARKOD OKUYUCU MODALI (BEYAZ EKRAN KORUMALI & HIZLI) ═══ */}
       {scannerOpen&&(
