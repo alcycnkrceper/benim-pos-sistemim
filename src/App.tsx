@@ -2013,7 +2013,6 @@ export default function App(){
         <nav className="p-3 flex-1 overflow-y-auto space-y-0.5">
           {[
             {p:'pos',icon:<ShoppingCart size={15}/>,label:'Hızlı Satış',perm:'pos'},
-            {p:'sales.prices',icon:<BadgePercent size={15}/>,label:'Fişlerden Fiyat Gör',perm:'sales.prices'},
             {p:'sales.history',icon:<Receipt size={15}/>,label:'Son Fişler & Geçmiş',perm:'sales.history'},
             {p:'orders',icon:<ShoppingBag size={15}/>,label:'Siparişli Satışlar',perm:'orders',badge:orders.filter(o=>o.status==='bekliyor'||o.status==='hazirlaniyor').length||null},
             {p:'quotes',icon:<FileEdit size={15}/>,label:'Teklifler',perm:'quotes',badge2:quotes.filter(q=>q.status==='beklemede').length||null},
@@ -2163,11 +2162,6 @@ export default function App(){
                 <div className="relative flex-1 min-w-[200px]"><Search className="absolute left-3.5 top-3 text-zinc-500" size={16}/><input type="text" value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Ürün adı veya barkod..." className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl py-3 pl-11 pr-4 outline-none focus:border-emerald-500 text-sm"/></div>
                 <button type="button" onClick={()=>openBarcodeScanner('pos')} className="px-4 py-3 rounded-xl font-black text-sm flex items-center gap-2 bg-emerald-500 text-zinc-950 hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/20"><span className="text-base leading-none">📷</span> Barkod Okut</button>
                 <button onClick={()=>setActivePage('sales.history')} className="px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-2 border bg-zinc-900 text-emerald-400 border-zinc-800 hover:border-emerald-500 hover:bg-emerald-500/10 transition-all"><Receipt size={15}/> Son Fişler ({sales.filter(s=>s.method!=='Tahsilat').length})</button>
-                <button onClick={()=>{
-                  const selCust=customers.find((c:any)=>c.id===(orderMode?orderCustomer:cartCustomer));
-                  if(selCust)setPastPriceCustomerFilter(selCust.name);
-                  setActivePage('sales.prices');
-                }} className="px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-2 border bg-zinc-900 text-amber-400 border-zinc-800 hover:border-amber-500 hover:bg-amber-500/10 transition-all"><BadgePercent size={15}/> Önceki Fiyatlar</button>
                 {orderMode&&(
                   <button onClick={()=>setOrderMode(false)} className="px-4 py-3 rounded-xl font-black text-sm flex items-center gap-2 border bg-orange-500 text-zinc-950 border-orange-500 hover:bg-orange-400 transition-all"><X size={15}/> Sipariş Modundan Çık</button>
                 )}
@@ -2237,10 +2231,10 @@ export default function App(){
                             setQuickPriceCustomerFilter(activeCustName);
                             setQuickPriceModalItem({target:'pos',item});
                           }}
-                          className="bg-amber-500/15 hover:bg-amber-500 hover:text-zinc-950 text-amber-400 border border-amber-500/30 px-2 py-1.5 rounded-xl text-[10px] font-black flex items-center gap-1 transition-all shrink-0"
-                          title="Bu ürünün önceki fişlerdeki satış fiyatlarını gör ve uygula"
+                          className="text-zinc-600 hover:text-zinc-300 hover:bg-zinc-800 p-1.5 rounded-lg transition-all shrink-0"
+                          title="Fiş geçmişindeki fiyatları kontrol et"
                         >
-                          <BadgePercent size={12}/> Eski Fiyat
+                          <Clock size={13}/>
                         </button>
                       </div>
                       <div className="flex items-center gap-1.5 bg-zinc-900 p-1 rounded-xl border border-zinc-800 focus-within:border-emerald-500">
@@ -2790,9 +2784,14 @@ export default function App(){
                 <h2 className="text-3xl font-black flex items-center gap-3"><Receipt className="text-emerald-500"/> Son Fişler & Satış Geçmişi</h2>
                 <p className="text-zinc-500 text-sm mt-0.5">Geçmiş fişleri görüntüleyin, tekrar çıktı alın veya içeriklerini/fiyatlarını düzenleyin (stok ve cari otomatik dengelenir)</p>
               </div>
-              <button onClick={()=>setActivePage('pos')} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-5 py-2.5 rounded-xl font-black flex items-center gap-2 text-sm shadow-lg shadow-emerald-500/20">
-                <ShoppingCart size={16}/> Hızlı Satışa Dön
-              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={()=>setActivePage('sales.prices')} className="bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 px-3.5 py-2.5 rounded-xl font-bold flex items-center gap-1.5 text-xs border border-zinc-800 transition-all" title="Ürün bazlı geçmiş fiş fiyatlarını sorgula">
+                  <Search size={14}/> Ürün Fiyat Sorgu
+                </button>
+                <button onClick={()=>setActivePage('pos')} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-5 py-2.5 rounded-xl font-black flex items-center gap-2 text-sm shadow-lg shadow-emerald-500/20">
+                  <ShoppingCart size={16}/> Hızlı Satışa Dön
+                </button>
+              </div>
             </div>
 
             {/* Arama ve Filtre Çubuğu */}
@@ -3089,10 +3088,10 @@ export default function App(){
                             setQuickPriceCustomerFilter(activeCustName);
                             setQuickPriceModalItem({target:'quote',item});
                           }}
-                          className="bg-amber-500/15 hover:bg-amber-500 hover:text-zinc-950 text-amber-400 border border-amber-500/30 px-2 py-1.5 rounded-xl text-[10px] font-black flex items-center gap-1 transition-all shrink-0"
-                          title="Bu ürünün önceki fişlerdeki satış fiyatlarını gör ve teklife uygula"
+                          className="text-zinc-600 hover:text-zinc-300 hover:bg-zinc-800 p-1.5 rounded-lg transition-all shrink-0"
+                          title="Fiş geçmişindeki fiyatları kontrol et"
                         >
-                          <BadgePercent size={12}/> Eski Fiyat
+                          <Clock size={13}/>
                         </button>
                       </div>
                       <div className="flex items-center gap-1.5 bg-zinc-900 p-1 rounded-xl border border-zinc-800 focus-within:border-purple-500">
