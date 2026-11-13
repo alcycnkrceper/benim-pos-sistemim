@@ -97,7 +97,7 @@ interface ReceiptSettings {
   companyName:string; companySubtitle:string; address:string; phone:string;
   taxNo:string; website:string; footerLine1:string; footerLine2:string;
   showTaxNo:boolean; showAddress:boolean; showPhone:boolean; showWebsite:boolean; showItemTax:boolean;
-  showDate:boolean; showStaff:boolean; showCustomer:boolean; showUnitPrice:boolean; showDiscount:boolean; showFooter:boolean;
+  showDate:boolean; showStaff:boolean; showCustomer:boolean; showUnitPrice:boolean; showDiscount:boolean; showFooter:boolean; showCustomerBalance:boolean;
   borderStyle:BorderStyle; fontSize:FontSize; paperSize:PaperSize;
   customWidthPx:number;
   marginTop:number;
@@ -121,7 +121,7 @@ const DEFAULT_SETTINGS: ReceiptSettings = {
   address:'', phone:'', taxNo:'', website:'',
   footerLine1:'TEŞEKKÜR EDERİZ.', footerLine2:'',
   showTaxNo:true, showAddress:false, showPhone:false, showWebsite:false, showItemTax:false,
-  showDate:true, showStaff:true, showCustomer:true, showUnitPrice:true, showDiscount:true, showFooter:true,
+  showDate:true, showStaff:true, showCustomer:true, showUnitPrice:true, showDiscount:true, showFooter:true, showCustomerBalance:true,
   borderStyle:'none', fontSize:'small', paperSize:'80mm',
   customWidthPx:300,
   marginTop:2,
@@ -347,6 +347,12 @@ function ReceiptTemplate({sale,settings,preview=false}:{sale:any;settings:Receip
           <span>TOPLAM ({sale.method||'Satış'}):</span>
           <span>₺{(sale.total||0).toFixed(2)}</span>
         </div>
+        {(settings.showCustomerBalance??true)&&sale.customerName&&sale.customerName!=='Perakende Müşteri'&&(sale.customerBalanceAfter!==undefined||sale.customerPrevBalance!==undefined||sale.customerBalance!==undefined)?(
+          <div style={{marginTop:3,borderTop:'1px dotted #000',paddingTop:3,fontSize:Math.max(8,tblFs-1)+'px',lineHeight:1.2}}>
+            {sale.customerPrevBalance!==undefined&&<div style={{display:'flex',justifyContent:'space-between'}}><span>Önceki Bakiye:</span><span>₺{Number(sale.customerPrevBalance).toFixed(2)}</span></div>}
+            <div style={{display:'flex',justifyContent:'space-between',fontWeight:900}}><span>Güncel Toplam Borç:</span><span>₺{Number(sale.customerBalanceAfter??sale.customerBalance??0).toFixed(2)}</span></div>
+          </div>
+        ):null}
       </div>
       {(settings.showFooter??true)&&(settings.footerLine1||settings.footerLine2)&&(
         <div style={{marginTop:4,textAlign:'center',borderTop:divider,paddingTop:3,fontSize:Math.max(8,tblFs-2)+'px',fontWeight:700}}>
@@ -1182,9 +1188,26 @@ export default function App(){
     if(method==='Veresiye'&&!cartCustomer)return alert('Veresiye satış için Müşteri seçmelisiniz!');
     const ac=customers.find((c:any)=>c.id===cartCustomer);
     const cleanCart=cart.map((i:any)=>({...i,qty:Math.max(1,Number(i.qty)||1),grossPrice:Math.max(0,Number(i.grossPrice)||0)}));
-    const sd={items:cleanCart,subTotal:rawTotal,discountPct:discountVal,discountAmount,totalCost:totalCostCart,total:finalTotal,method,customerName:ac?ac.name:'Perakende Müşteri',customerTax:ac?ac.taxNum:'-',date:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name};
+    const prevBal=ac?Number(ac.balance||0):0;
+    const newBal=prevBal+(method==='Veresiye'?finalTotal:0);
+    const sd={
+      items:cleanCart,
+      subTotal:rawTotal,
+      discountPct:discountVal,
+      discountAmount,
+      totalCost:totalCostCart,
+      total:finalTotal,
+      method,
+      customerName:ac?ac.name:'Perakende Müşteri',
+      customerTax:ac?ac.taxNum:'-',
+      customerPrevBalance:prevBal,
+      customerBalanceAfter:newBal,
+      date:new Date().toLocaleString('tr-TR'),
+      staffId:currentStaff?.id,
+      staffName:currentStaff?.name
+    };
     const ref=await addDoc(collection(db,'sales'),sd);
-    if(method==='Veresiye'&&ac)await updateDoc(doc(db,'customers',ac.id),{balance:(ac.balance||0)+finalTotal});
+    if(method==='Veresiye'&&ac)await updateDoc(doc(db,'customers',ac.id),{balance:newBal});
     for(const item of cleanCart){const p=products.find(p=>p.id===item.id);if(p&&typeof p.stock==='number')await updateDoc(doc(db,'products',p.id),{stock:Math.max(0,(p.stock||0)-item.qty)});}
     await logAction('SATIŞ',(ac?ac.name:'Perakende')+' - '+(method)+' - ₺'+(finalTotal.toFixed(2)),finalTotal);
     setLastSale({id:ref.id,...sd});setCart([]);setCartCustomer('');setDiscountPct('');setDiscountAmtInput('');setIsVeresiyeOpen(false);
@@ -4341,6 +4364,7 @@ export default function App(){
                   <Toggle label="Birim Fiyat Sütunu" value={draftSettings.showUnitPrice??true} onChange={v=>upDraft('showUnitPrice',v)}/>
                   <Toggle label="Ürün KDV Sütunu" value={draftSettings.showItemTax} onChange={v=>upDraft('showItemTax',v)}/>
                   <Toggle label="Ara Toplam & İskonto Satırı" value={draftSettings.showDiscount??true} onChange={v=>upDraft('showDiscount',v)}/>
+                  <Toggle label="Cari Bakiye Bilgisi (Fiş Altında)" value={draftSettings.showCustomerBalance??true} onChange={v=>upDraft('showCustomerBalance',v)}/>
                   <Toggle label="Firma Adresi" value={draftSettings.showAddress} onChange={v=>upDraft('showAddress',v)}/>
                   <Toggle label="Firma Telefonu" value={draftSettings.showPhone} onChange={v=>upDraft('showPhone',v)}/>
                   <Toggle label="Alt Bilgi (Teşekkür Yazısı)" value={draftSettings.showFooter??true} onChange={v=>upDraft('showFooter',v)}/>
