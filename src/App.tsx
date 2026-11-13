@@ -43,17 +43,17 @@ function loadXLSX(): Promise<any> {
   });
 }
 
-// ─── MOBİL KAMERA BARKOD OKUYUCU (CLOUDFLARE CDN + YEDEK CDN & BİP SESİ) ─────
-function loadBarcodeScanner(): Promise<any> {
+// ─── ULTRA HIZLI BARKOD MOTORU (NATIVE BARCODEDETECTOR + ZXING FALLBACK) ────
+function loadZXing(): Promise<any> {
   return new Promise((resolve, reject) => {
-    if ((window as any).Html5Qrcode) return resolve((window as any).Html5Qrcode);
+    if ((window as any).ZXing) return resolve((window as any).ZXing);
     const s = document.createElement('script');
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js';
-    s.onload = () => resolve((window as any).Html5Qrcode);
+    s.src = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
+    s.onload = () => resolve((window as any).ZXing);
     s.onerror = () => {
       const s2 = document.createElement('script');
-      s2.src = 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js';
-      s2.onload = () => resolve((window as any).Html5Qrcode);
+      s2.src = 'https://cdnjs.cloudflare.com/ajax/libs/zxing-js/0.21.3/index.min.js';
+      s2.onload = () => resolve((window as any).ZXing);
       s2.onerror = reject;
       document.head.appendChild(s2);
     };
@@ -446,20 +446,57 @@ export default function App(){
   const [isVeresiyeOpen,setIsVeresiyeOpen]=useState(false);
   const [printSale,setPrintSale]=useState<any>(null);
   const [mergedPrint,setMergedPrint]=useState<any>(null);
-  // ── Mobil Kamera Barkod Okuyucu ───────────────────────────────────────
+  // ── Mobil Kamera Barkod Okuyucu (Beyaz Ekran Korumalı & Ultra Hızlı) ───
   const [scannerOpen,setScannerOpen]=useState(false);
   const [scannerTarget,setScannerTarget]=useState<'pos'|'newProduct'|'editProduct'|'productSearch'|'quote'|'editSale'|'count'>('pos');
   const [scannerContinuous,setScannerContinuous]=useState(true);
   const [scannerLastMsg,setScannerLastMsg]=useState('');
   const [scannerError,setScannerError]=useState('');
-  const scannerRef=useRef<any>(null);
+  const [torchOn,setTorchOn]=useState(false);
+  const videoRef=useRef<HTMLVideoElement|null>(null);
+  const streamRef=useRef<MediaStream|null>(null);
+  const scanLoopRef=useRef<number|null>(null);
   const lastScannedRef=useRef<{code:string;ts:number}>({code:'',ts:0});
+  const [printOrder,setPrintOrder]=useState<any>(null);
+
+  const stopCameraStream=()=>{
+    if(scanLoopRef.current){
+      window.clearInterval(scanLoopRef.current);
+      scanLoopRef.current=null;
+    }
+    if(streamRef.current){
+      streamRef.current.getTracks().forEach(t=>{try{t.stop();}catch{}});
+      streamRef.current=null;
+    }
+    if(videoRef.current){
+      try{videoRef.current.pause();videoRef.current.srcObject=null;}catch{}
+    }
+    setTorchOn(false);
+  };
+
+  const closeBarcodeScanner=()=>{
+    stopCameraStream();
+    setScannerOpen(false);
+  };
+
   const openBarcodeScanner=(target:'pos'|'newProduct'|'editProduct'|'productSearch'|'quote'|'editSale'|'count'='pos')=>{
     setScannerTarget(target);
     setScannerLastMsg('');
     setScannerError('');
     setScannerContinuous(target==='pos'||target==='count');
     setScannerOpen(true);
+  };
+
+  const toggleTorch=async()=>{
+    try{
+      const track=streamRef.current?.getVideoTracks()?.[0];
+      if(!track)return;
+      const next=!torchOn;
+      await (track as any).applyConstraints({advanced:[{torch:next}]});
+      setTorchOn(next);
+    }catch{
+      setScannerLastMsg('ℹ️ Bu cihazda el feneri kontrolü desteklenmiyor.');
+    }
   };
   // ── Son Fişler & Fiş Düzenleme ────────────────────────────────────────
   const [saleHistorySearch,setSaleHistorySearch]=useState('');
@@ -612,31 +649,31 @@ export default function App(){
     return()=>uns.forEach(u=>u());
   },[]);
 
-  // ── Mobil Kamera Barkod İşleyici ──────────────────────────────────────
+  // ── Mobil Kamera Barkod İşleyici (Ultra Hızlı & Beyaz Ekran Korumalı) ──
   const handleBarcodeDetected=(rawCode:string)=>{
     const code=String(rawCode||'').trim();
     if(!code)return;
     const now=Date.now();
-    if(lastScannedRef.current.code===code&&now-lastScannedRef.current.ts<1500)return;
+    if(lastScannedRef.current.code===code&&now-lastScannedRef.current.ts<1200)return;
     lastScannedRef.current={code,ts:now};
     playBeep();
 
     if(scannerTarget==='newProduct'){
       setPBarcode(code);
       setScannerLastMsg('✅ Barkod forma yazıldı: '+code);
-      setScannerOpen(false);
+      closeBarcodeScanner();
       return;
     }
     if(scannerTarget==='editProduct'){
       setEditForm((prev:any)=>({...prev,barcode:code}));
       setScannerLastMsg('✅ Barkod güncellendi: '+code);
-      setScannerOpen(false);
+      closeBarcodeScanner();
       return;
     }
     if(scannerTarget==='productSearch'){
       setProductSearch(code);
       setScannerLastMsg('🔍 Ürün aramaya yazıldı: '+code);
-      setScannerOpen(false);
+      closeBarcodeScanner();
       return;
     }
 
@@ -647,7 +684,7 @@ export default function App(){
         setFlash(true);
         setTimeout(()=>setFlash(false),300);
         setScannerLastMsg('✅ Sepete eklendi: '+found.name+' (₺'+(found.grossPrice||0)+')');
-        if(!scannerContinuous)setScannerOpen(false);
+        if(!scannerContinuous)closeBarcodeScanner();
       }else{
         setSearchQuery(code);
         setScannerLastMsg('⚠️ Tanımsız barkod: '+code);
@@ -658,7 +695,7 @@ export default function App(){
       if(found){
         addToQuote(found);
         setScannerLastMsg('✅ Teklife eklendi: '+found.name);
-        if(!scannerContinuous)setScannerOpen(false);
+        if(!scannerContinuous)closeBarcodeScanner();
       }else{
         setQuoteSearch(code);
         setScannerLastMsg('⚠️ Ürün bulunamadı: '+code);
@@ -673,7 +710,7 @@ export default function App(){
           return[...prev,{...found,qty:1}];
         });
         setScannerLastMsg('✅ Fişe eklendi: '+found.name);
-        if(!scannerContinuous)setScannerOpen(false);
+        if(!scannerContinuous)closeBarcodeScanner();
       }else{
         setScannerLastMsg('⚠️ Ürün bulunamadı: '+code);
       }
@@ -710,16 +747,24 @@ export default function App(){
           }
         }catch{}
       }
-      const Html5Qrcode=await loadBarcodeScanner();
-      const tempScanner=new Html5Qrcode('mobile-barcode-file-temp');
-      const decodedText=await tempScanner.scanFile(file,false);
-      try{tempScanner.clear();}catch{}
-      if(decodedText){
-        handleBarcodeRef.current(decodedText);
+      const ZXing=await loadZXing();
+      const reader=new ZXing.BrowserMultiFormatReader();
+      const imgUrl=URL.createObjectURL(file);
+      try{
+        const res=await reader.decodeFromImageUrl(imgUrl);
+        URL.revokeObjectURL(imgUrl);
+        if(res&&res.getText()){
+          handleBarcodeRef.current(res.getText());
+          e.target.value='';
+          return;
+        }
+      }catch{
+        URL.revokeObjectURL(imgUrl);
+        throw new Error('Could not decode');
       }
     }catch{
       setScannerLastMsg('');
-      setScannerError('Fotoğraftaki barkod net okunamadı. Lütfen barkoda biraz daha yaklaşıp net odaklayarak tekrar çekin.');
+      setScannerError('Fotoğraftaki barkod net okunamadı. Lütfen barkoda 15 cm mesafeden net odaklayarak tekrar çekin.');
     }finally{
       e.target.value='';
     }
@@ -727,76 +772,133 @@ export default function App(){
 
   useEffect(()=>{
     if(!scannerOpen){
-      if(scannerRef.current){
-        scannerRef.current.stop().catch(()=>{}).finally(()=>{
-          try{scannerRef.current.clear();}catch{}
-          scannerRef.current=null;
-        });
-      }
+      stopCameraStream();
       return;
     }
     let cancelled=false;
+    let zxingReader:any=null;
+
     (async()=>{
       try{
-        await loadBarcodeScanner();
-        if(cancelled)return;
-        const Html5Qrcode=(window as any).Html5Qrcode;
-        const Fmts=(window as any).Html5QrcodeSupportedFormats;
-        const formatsToSupport=Fmts?[
-          Fmts.EAN_13,Fmts.EAN_8,Fmts.CODE_128,Fmts.CODE_39,
-          Fmts.UPC_A,Fmts.UPC_E,Fmts.ITF,Fmts.QR_CODE
-        ]:undefined;
-
-        const html5QrCode=new Html5Qrcode('mobile-barcode-reader',{
-          formatsToSupport,
-          useBarCodeDetectorIfSupported:true,
-          verbose:false
-        });
-        scannerRef.current=html5QrCode;
-
-        const scanConfig={
-          fps:20,
-          qrbox:(viewfinderWidth:number,viewfinderHeight:number)=>({
-            width:Math.max(200,Math.floor(viewfinderWidth*0.86)),
-            height:Math.max(110,Math.floor(viewfinderHeight*0.45))
-          }),
-          disableFlip:false,
-          videoConstraints:{
-            facingMode:'environment',
-            width:{ideal:1920},
-            height:{ideal:1080},
-            focusMode:'continuous'
-          } as any
+        const constraints:MediaStreamConstraints={
+          audio:false,
+          video:{
+            facingMode:{ideal:'environment'},
+            width:{ideal:1280},
+            height:{ideal:720}
+          }
         };
-
+        let stream:MediaStream;
         try{
-          await html5QrCode.start(
-            {facingMode:'environment'},
-            scanConfig,
-            (decodedText:string)=>handleBarcodeRef.current(decodedText),
-            ()=>{}
-          );
+          stream=await navigator.mediaDevices.getUserMedia(constraints);
         }catch{
-          // Yüksek çözünürlük kısıtlamasını desteklemeyen telefonlar için standart kamera başlatma
-          await html5QrCode.start(
-            {facingMode:'environment'},
-            {fps:15,qrbox:{width:250,height:130}},
-            (decodedText:string)=>handleBarcodeRef.current(decodedText),
-            ()=>{}
-          );
+          stream=await navigator.mediaDevices.getUserMedia({video:true,audio:false});
         }
-      }catch(err:any){
-        if(!cancelled)setScannerError('Canlı kameraya erişilemedi. Aşağıdaki "📸 Fotoğraf Çekerek Barkod Okut" butonunu kullanarak doğrudan telefon kameranızla okutabilirsiniz.');
+        if(cancelled){
+          stream.getTracks().forEach(t=>t.stop());
+          return;
+        }
+        streamRef.current=stream;
+
+        // Sürekli otomatik netleme (continuous autofocus) destekleyen kameralarda aktif et
+        try{
+          const track=stream.getVideoTracks()[0];
+          const caps=(track as any).getCapabilities?.();
+          if(caps?.focusMode?.includes?.('continuous')){
+            await (track as any).applyConstraints({advanced:[{focusMode:'continuous'}]});
+          }
+        }catch{}
+
+        const videoEl=videoRef.current;
+        if(!videoEl)return;
+        videoEl.srcObject=stream;
+        await videoEl.play().catch(()=>{});
+
+        // 1. Öncelik: Tarayıcı yerleşik donanım hızlandırmalı BarcodeDetector (Android Chrome vb. anında okur)
+        let nativeDetector:any=null;
+        if('BarcodeDetector' in window){
+          try{
+            nativeDetector=new (window as any).BarcodeDetector({
+              formats:['ean_13','ean_8','code_128','code_39','upc_a','upc_e','itf','qr_code']
+            });
+          }catch{}
+        }
+
+        // 2. Yedek: ZXing kütüphanesi (iOS Safari ve diğer tarayıcılar için)
+        let canvas:HTMLCanvasElement|null=null;
+        let ctx:CanvasRenderingContext2D|null=null;
+        if(!nativeDetector){
+          try{
+            const ZXing=await loadZXing();
+            if(cancelled)return;
+            const hints=new Map();
+            const formats=[
+              ZXing.BarcodeFormat.EAN_13,
+              ZXing.BarcodeFormat.EAN_8,
+              ZXing.BarcodeFormat.CODE_128,
+              ZXing.BarcodeFormat.CODE_39,
+              ZXing.BarcodeFormat.UPC_A,
+              ZXing.BarcodeFormat.UPC_E,
+              ZXing.BarcodeFormat.ITF,
+              ZXing.BarcodeFormat.QR_CODE
+            ];
+            hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,formats);
+            hints.set(ZXing.DecodeHintType.TRY_HARDER,true);
+            zxingReader=new ZXing.MultiFormatReader();
+            zxingReader.setHints(hints);
+            canvas=document.createElement('canvas');
+            ctx=canvas.getContext('2d',{willReadFrequently:true});
+          }catch{}
+        }
+
+        let busy=false;
+        scanLoopRef.current=window.setInterval(async()=>{
+          if(cancelled||busy||!videoRef.current||videoRef.current.readyState<2)return;
+          busy=true;
+          try{
+            if(nativeDetector){
+              const barcodes=await nativeDetector.detect(videoRef.current);
+              if(barcodes&&barcodes.length>0&&barcodes[0].rawValue){
+                handleBarcodeRef.current(barcodes[0].rawValue);
+              }
+            }else if(zxingReader&&canvas&&ctx){
+              const vw=videoRef.current.videoWidth;
+              const vh=videoRef.current.videoHeight;
+              if(vw>0&&vh>0){
+                // Sadece merkezdeki barkod şeridini (80% genişlik, 45% yükseklik) tarayarak 3 kat daha hızlı okuma
+                const cropW=Math.floor(vw*0.85);
+                const cropH=Math.floor(vh*0.45);
+                const startX=Math.floor((vw-cropW)/2);
+                const startY=Math.floor((vh-cropH)/2);
+                canvas.width=cropW;
+                canvas.height=cropH;
+                ctx.drawImage(videoRef.current,startX,startY,cropW,cropH,0,0,cropW,cropH);
+                const imageData=ctx.getImageData(0,0,cropW,cropH);
+                const ZXing=(window as any).ZXing;
+                const source=new ZXing.RGBLuminanceSource(imageData.data,cropW,cropH);
+                const bitmap=new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(source));
+                const result=zxingReader.decode(bitmap);
+                if(result&&result.getText()){
+                  handleBarcodeRef.current(result.getText());
+                }
+              }
+            }
+          }catch{
+            // O karede barkod bulunamadıysa sessizce sonraki kareye geç
+          }finally{
+            busy=false;
+          }
+        },90); // Saniyede ~11 kez ultra hızlı tarama
+      }catch{
+        if(!cancelled){
+          setScannerError('Canlı kameraya erişilemedi. Lütfen kamera izni verin veya aşağıdaki "📸 Fotoğraf Çekerek Okut" butonunu kullanın.');
+        }
       }
     })();
+
     return()=>{
       cancelled=true;
-      if(scannerRef.current){
-        scannerRef.current.stop().catch(()=>{}).finally(()=>{
-          try{scannerRef.current.clear();}catch{}
-          scannerRef.current=null;
-        });
-      }
+      stopCameraStream();
     };
   },[scannerOpen]);
 
@@ -1024,9 +1126,22 @@ export default function App(){
   // ── Fiş Düzenleme & Silme & Yeniden Yazdırma ──────────────────────────
   const triggerReprint=(sale:any)=>{
     setPrintQuote(null);
+    setPrintOrder(null);
     setMergedPrint(null);
     setPrintSale(sale);
     setTimeout(()=>window.print(),100);
+  };
+  const triggerOrderPrint=(order:any)=>{
+    setPrintQuote(null);
+    setMergedPrint(null);
+    setPrintSale(null);
+    setPrintOrder(order);
+    setTimeout(()=>window.print(),100);
+  };
+  const toggleOrderItemChecked=async(order:any,itemIdx:number)=>{
+    if(!order?.id)return;
+    const updatedItems=(order.items||[]).map((it:any,idx:number)=>idx===itemIdx?{...it,checked:!it.checked}:it);
+    await updateDoc(doc(db,'orders',order.id),{items:updatedItems,updatedAt:new Date().toLocaleString('tr-TR')});
   };
   const openEditSale=(sale:any)=>{
     setEditingSale(sale);
@@ -1671,7 +1786,7 @@ export default function App(){
     const dr=sorted.length>0?(parseDT(sorted[0].date).toLocaleDateString('tr-TR'))+' - '+(parseDT(sorted[sorted.length-1].date).toLocaleDateString('tr-TR')):'';
     return{id:'MRG-'+(Date.now()),customerName:selectedCustomer?.name||'',customerTax:selectedCustomer?.taxNum||'-',method:'Veresiye',date:new Date().toLocaleString('tr-TR'),dateRange:dr,items:allItems,subTotal:sorted.reduce((a,b)=>a+(b.subTotal||b.total||0),0),discountAmount:sorted.reduce((a,b)=>a+(b.discountAmount||0),0),discountPct:0,total:selTotal,isMerged:true,mergedCount:sorted.length};
   };
-  const handleMergedPrint=()=>{setPrintQuote(null);setPrintSale(null);setMergedPrint(buildMerged());setTimeout(()=>window.print(),150);};
+  const handleMergedPrint=()=>{setPrintQuote(null);setPrintOrder(null);setPrintSale(null);setMergedPrint(buildMerged());setTimeout(()=>window.print(),150);};
   const handleMergedXlsx=async()=>{const cn=(selectedCustomer?.name||'musteri').replace(/[^a-zA-Z0-9_]/g,'_');await handleParasutExport(selSales,'parasut_'+(cn)+'_'+(new Date().toISOString().slice(0,10))+'.xlsx');};
   const customerProductHistory=useMemo(()=>{
     if(!selectedCustomer)return[];
@@ -1966,7 +2081,9 @@ export default function App(){
                 <div className="relative flex-1 min-w-[200px]"><Search className="absolute left-3.5 top-3 text-zinc-500" size={16}/><input type="text" value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Ürün adı veya barkod..." className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl py-3 pl-11 pr-4 outline-none focus:border-emerald-500 text-sm"/></div>
                 <button type="button" onClick={()=>openBarcodeScanner('pos')} className="px-4 py-3 rounded-xl font-black text-sm flex items-center gap-2 bg-emerald-500 text-zinc-950 hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/20"><span className="text-base leading-none">📷</span> Barkod Okut</button>
                 <button onClick={()=>setActivePage('sales.history')} className="px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-2 border bg-zinc-900 text-emerald-400 border-zinc-800 hover:border-emerald-500 hover:bg-emerald-500/10 transition-all"><Receipt size={15}/> Son Fişler ({sales.filter(s=>s.method!=='Tahsilat').length})</button>
-                <button onClick={()=>setOrderMode(!orderMode)} className={'px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-2 border transition-all '+(orderMode?'bg-orange-500 text-zinc-950 border-orange-500':'bg-zinc-800 text-zinc-400 border-zinc-700 hover:border-orange-400 hover:text-orange-400')}><ShoppingBag size={15}/>{orderMode?'Sipariş Modu':'Sipariş Oluştur'}</button>
+                {orderMode&&(
+                  <button onClick={()=>setOrderMode(false)} className="px-4 py-3 rounded-xl font-black text-sm flex items-center gap-2 border bg-orange-500 text-zinc-950 border-orange-500 hover:bg-orange-400 transition-all"><X size={15}/> Sipariş Modundan Çık</button>
+                )}
               </div>
               {orderMode&&(
                 <div className="bg-orange-500/10 border border-orange-500/30 rounded-2xl p-4 mb-4 flex flex-wrap items-center gap-3">
@@ -2328,6 +2445,7 @@ export default function App(){
                         <div className="text-zinc-600 text-xs">{(order.items||[]).length} kalem</div>
                       </div>
                       <div className="flex flex-col gap-2 shrink-0">
+                        <button onClick={()=>triggerOrderPrint(order)} className="bg-white hover:bg-zinc-200 text-zinc-950 px-3 py-1.5 rounded-lg text-xs font-black flex items-center gap-1.5 shadow"><Printer size={12}/> Fiş Çıkar</button>
                         {order.status==='bekliyor'&&<>
                           <button onClick={()=>handleOrderStatus(order.id,'hazirlaniyor')} className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1"><Clock size={11}/> Hazırla</button>
                           <button onClick={()=>{setEditingOrder(order);setEditOrderCart([...(order.items||[])]);setEditOrderDiscount(String(order.discountPct||0));}} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg text-xs font-bold border border-zinc-700 flex items-center gap-1"><Pencil size={11}/> Düzenle</button>
@@ -2338,9 +2456,25 @@ export default function App(){
                         {order.status==='gönderildi'&&<span className="text-emerald-500 text-xs font-bold flex items-center gap-1"><CheckCircle size={12}/> Satışa Dönüştürüldü</span>}
                       </div>
                     </div>
-                    <div className="border-t border-zinc-800/50 px-5 pb-3">
-                      <div className="flex flex-wrap gap-2 mt-2.5">
-                        {(order.items||[]).map((item:any,i:number)=><span key={i} className="text-xs bg-zinc-800 text-zinc-300 px-3 py-1.5 rounded-xl font-medium">{item.name} <span className="font-black text-white">×{item.qty}</span></span>)}
+                    <div className="border-t border-zinc-800/50 px-5 pb-3.5 pt-2.5">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wide">Hazırlık Kontrol Listesi (Üzerine tıklayarak tik atın — Fişte de kare kutucuk çıkar)</span>
+                        <span className="text-[11px] font-black text-emerald-400">{(order.items||[]).filter((it:any)=>it.checked).length} / {(order.items||[]).length} Hazır</span>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {(order.items||[]).map((item:any,i:number)=>(
+                          <button
+                            key={i}
+                            type="button"
+                            onClick={()=>toggleOrderItemChecked(order,i)}
+                            className={'text-xs px-3 py-2 rounded-xl font-bold flex items-center gap-2 border transition-all '+(item.checked?'bg-emerald-500/15 border-emerald-500/50 text-emerald-300 line-through':'bg-zinc-800/90 border-zinc-700 text-zinc-200 hover:border-orange-400')}
+                            title="Hazırlandı olarak işaretle / kaldır"
+                          >
+                            {item.checked?<SquareCheck size={15} className="text-emerald-400 shrink-0"/>:<Square size={15} className="text-zinc-400 shrink-0"/>}
+                            <span>{item.name}</span>
+                            <span className="font-black text-white bg-zinc-950/70 px-1.5 py-0.5 rounded">×{item.qty}</span>
+                          </button>
+                        ))}
                       </div>
                     </div>
                   </div>
@@ -4454,13 +4588,13 @@ export default function App(){
         </div>
       )}
 
-      {/* ═══ MOBİL KAMERA BARKOD OKUYUCU MODALI ═══════════════════════════ */}
+      {/* ═══ MOBİL KAMERA BARKOD OKUYUCU MODALI (BEYAZ EKRAN KORUMALI & HIZLI) ═══ */}
       {scannerOpen&&(
         <div className="fixed inset-0 bg-black/95 backdrop-blur-sm flex items-center justify-center z-[500] p-4">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-[32px] w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in duration-200">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-[32px] w-full max-w-md overflow-hidden shadow-2xl">
             <div className="p-5 border-b border-zinc-800 flex justify-between items-center bg-zinc-950/60">
               <div>
-                <h3 className="text-lg font-black text-white flex items-center gap-2">📷 Kamera ile Barkod Okut</h3>
+                <h3 className="text-lg font-black text-white flex items-center gap-2">📷 Kamera ile Hızlı Barkod Okut</h3>
                 <p className="text-zinc-500 text-xs mt-0.5">
                   {scannerTarget==='pos'?'Hızlı Satış — Okutulan ürün anında sepete eklenir':
                    scannerTarget==='newProduct'?'Yeni Ürün — Barkod numarası forma yazılır':
@@ -4470,12 +4604,28 @@ export default function App(){
                    scannerTarget==='quote'?'Teklif — Okutulan ürün teklife eklenir':'Barkod Arama'}
                 </p>
               </div>
-              <button onClick={()=>setScannerOpen(false)} className="text-zinc-400 hover:text-white bg-zinc-800 p-2 rounded-xl"><X size={18}/></button>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={toggleTorch} className={'px-3 py-2 rounded-xl text-xs font-black border transition-all '+(torchOn?'bg-yellow-400 text-zinc-950 border-yellow-400':'bg-zinc-800 text-zinc-300 border-zinc-700')} title="Fener / Işık Aç-Kapat">🔦 Işık</button>
+                <button type="button" onClick={closeBarcodeScanner} className="text-zinc-400 hover:text-white bg-zinc-800 p-2 rounded-xl"><X size={18}/></button>
+              </div>
             </div>
             <div className="p-5 space-y-3.5">
-              <div id="mobile-barcode-reader" className="w-full rounded-2xl overflow-hidden bg-black min-h-[250px] border-2 border-emerald-500/50 relative"/>
-              <div id="mobile-barcode-file-temp" style={{display:'none'}}/>
-              <p className="text-[11px] text-zinc-400 text-center">Barkodu kameraya <strong>15–20 cm</strong> mesafeden yatay tutun veya net odaklama için aşağıdaki fotoğraf butonunu kullanın.</p>
+              <div className="w-full rounded-2xl overflow-hidden bg-black h-[240px] border-2 border-emerald-500/50 relative flex items-center justify-center">
+                <video
+                  ref={videoRef}
+                  playsInline
+                  muted
+                  autoPlay
+                  className="w-full h-full object-cover"
+                />
+                {/* Kırmızı Lazer Hedef Çizgisi ve Çerçevesi */}
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                  <div className="w-[84%] h-[46%] border-2 border-emerald-400/80 rounded-2xl relative shadow-[0_0_0_9999px_rgba(0,0,0,0.38)]">
+                    <div className="absolute left-2 right-2 top-1/2 -translate-y-1/2 h-0.5 bg-red-500 shadow-[0_0_8px_#ef4444]"/>
+                  </div>
+                </div>
+              </div>
+              <p className="text-[11px] text-zinc-400 text-center">Barkodu kırmızı çizgiye hizalayın (15–20 cm mesafe). Çok küçük veya parlak barkodlar için aşağıdaki net fotoğraf butonunu da kullanabilirsiniz.</p>
               <label className="w-full bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 font-black py-3 px-4 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all">
                 <span>📸 Net Odaklamalı Fotoğraf Çekerek Okut</span>
                 <input type="file" accept="image/*" capture="environment" onChange={handlePhotoBarcodeScan} style={{display:'none'}}/>
@@ -4504,7 +4654,7 @@ export default function App(){
               )}
               <button
                 type="button"
-                onClick={()=>setScannerOpen(false)}
+                onClick={closeBarcodeScanner}
                 className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-black py-3.5 rounded-2xl text-sm border border-zinc-700"
               >
                 Kamerayı Kapat {scannerTarget==='pos'&&cart.length>0?`(Sepette ${cart.reduce((a:number,b:any)=>a+(Number(b.qty)||1),0)} ürün)`:''}
@@ -4576,6 +4726,85 @@ export default function App(){
           {printQuote.note&&<div style={{marginTop:4,fontSize:'10px'}}>Not: {printQuote.note}</div>}
           <div style={{marginTop:6,textAlign:'center',borderTop:'1px dashed #000',paddingTop:3,fontSize:'9px',fontWeight:700}}>
             Bu belge bilgi amaçlı ön tekliftir, mali değeri yoktur.
+          </div>
+        </div>
+      ):printOrder?(
+        <div style={{maxWidth:(receiptSettings.customWidthPx||PAPER_WIDTHS[receiptSettings.paperSize])+'px',width:(receiptSettings.customWidthPx||PAPER_WIDTHS[receiptSettings.paperSize])+'px',margin:'0 auto',paddingTop:(receiptSettings.marginTop??2)+'px',paddingBottom:(receiptSettings.marginBottom??2)+'px',paddingLeft:(receiptSettings.marginLeft??4)+'px',paddingRight:(receiptSettings.marginRight??4)+'px',background:'white',color:'black',fontFamily:"'Arial Narrow', Arial, sans-serif",fontSize:(receiptSettings.tableFontSize??11)+'px',lineHeight:1.2,boxSizing:'border-box'}}>
+          {receiptSettings.logoBase64&&(
+            <div style={{textAlign:receiptSettings.logoAlign??'center',marginBottom:4}}>
+              <img src={receiptSettings.logoBase64} alt="logo" style={{width:(receiptSettings.logoSize??55)+'px',height:'auto',display:'inline-block'}}/>
+            </div>
+          )}
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',paddingBottom:4,marginBottom:4,borderBottom:'1px dashed #000'}}>
+            <div>
+              <div style={{fontSize:(receiptSettings.companyNameFontSize??18)+'px',fontWeight:900,textTransform:'uppercase',lineHeight:1.05}}>{receiptSettings.companyName}</div>
+              <div style={{fontSize:'10px',fontWeight:900,marginTop:2}}>SİPARİŞ HAZIRLAMA VE KONTROL FİŞİ</div>
+            </div>
+            <div style={{textAlign:'right',fontSize:'10px',whiteSpace:'nowrap'}}>
+              <div><strong>{printOrder.createdAt?.split(' ')[0]}</strong> {printOrder.createdAt?.split(' ')[1]?.slice(0,5)}</div>
+              <div>Sipariş: <strong>#{printOrder.id?.slice(-5).toUpperCase()}</strong></div>
+              {printOrder.deliveryDate&&<div>Teslim: <strong>{printOrder.deliveryDate}</strong></div>}
+              {printOrder.staffName&&<div>Personel: {printOrder.staffName}</div>}
+            </div>
+          </div>
+          <div style={{paddingBottom:4,marginBottom:4,borderBottom:'1px dashed #000',fontWeight:900,textTransform:'uppercase',fontSize:(receiptSettings.tableFontSize??11)+'px'}}>
+            MÜŞTERİ: {printOrder.customerName||'Belirtilmemiş'}
+            {printOrder.customerTax&&printOrder.customerTax!=='-'&&<span style={{float:'right',fontSize:'9px',fontWeight:700}}>VKN: {printOrder.customerTax}</span>}
+          </div>
+          {printOrder.note&&(
+            <div style={{paddingBottom:4,marginBottom:4,borderBottom:'1px dashed #000',fontSize:'10px',fontWeight:700}}>
+              SİPARİŞ NOTU: {printOrder.note}
+            </div>
+          )}
+          <table style={{width:'100%',borderCollapse:'collapse',marginBottom:4}}>
+            <thead>
+              <tr style={{borderBottom:'1px dashed #000',fontSize:Math.max(8,(receiptSettings.tableFontSize??11)-1)+'px'}}>
+                <th style={{textAlign:'center',width:'22px',padding:'2px 0'}}>KTR</th>
+                <th style={{textAlign:'left',padding:'2px 2px'}}>ÜRÜN ADI</th>
+                <th style={{textAlign:'center',padding:'2px'}}>ADET</th>
+                <th style={{textAlign:'right',padding:'2px'}}>BİRİM</th>
+                <th style={{textAlign:'right',padding:'2px 0'}}>TUTAR</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(printOrder.items||[]).map((item:any,i:number)=>(
+                <tr key={i} style={{borderBottom:'1px dotted #999',fontSize:(receiptSettings.tableFontSize??11)+'px'}}>
+                  <td style={{padding:'4px 2px 4px 0',textAlign:'center',verticalAlign:'middle'}}>
+                    <span style={{
+                      display:'inline-block',
+                      width:'13px',
+                      height:'13px',
+                      border:'1.8px solid #000',
+                      borderRadius:'2px',
+                      lineHeight:'11px',
+                      fontSize:'11px',
+                      fontWeight:900,
+                      textAlign:'center'
+                    }}>{item.checked?'✓':''}</span>
+                  </td>
+                  <td style={{padding:'4px 2px',fontWeight:700,wordBreak:'break-word'}}>{item.name}</td>
+                  <td style={{padding:'4px 2px',textAlign:'center',fontWeight:900,fontSize:((receiptSettings.tableFontSize??11)+1)+'px'}}>{item.qty}</td>
+                  <td style={{padding:'4px 2px',textAlign:'right'}}>{(item.grossPrice||0).toFixed(2)}</td>
+                  <td style={{padding:'4px 0 4px 2px',textAlign:'right',fontWeight:900}}>{((item.grossPrice||0)*(item.qty||1)).toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{borderTop:'1px dashed #000',paddingTop:3}}>
+            {(printOrder.discountAmount||0)>0&&(
+              <>
+                <div style={{display:'flex',justifyContent:'space-between',fontWeight:700}}><span>Ara Toplam:</span><span>₺{(printOrder.subTotal||0).toFixed(2)}</span></div>
+                <div style={{display:'flex',justifyContent:'space-between',fontWeight:700}}><span>İskonto:</span><span>-₺{(printOrder.discountAmount||0).toFixed(2)}</span></div>
+              </>
+            )}
+            <div style={{display:'flex',justifyContent:'space-between',fontWeight:900,fontSize:(receiptSettings.totalFontSize??14)+'px',marginTop:2}}>
+              <span>SİPARİŞ TOPLAMI ({(printOrder.items||[]).length} Kalem):</span>
+              <span>₺{(printOrder.total||0).toFixed(2)}</span>
+            </div>
+          </div>
+          <div style={{marginTop:8,paddingTop:4,borderTop:'1px dashed #000',display:'flex',justifyContent:'space-between',fontSize:'9px',fontWeight:700}}>
+            <span>Hazırlayan İmza: ....................</span>
+            <span>Kontrol Eden: ....................</span>
           </div>
         </div>
       ):(
