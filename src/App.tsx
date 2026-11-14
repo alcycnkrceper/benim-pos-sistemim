@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc, setDoc } from 'firebase/firestore';
 import {
   ShoppingCart, Package, Users, Plus, Trash2, Search, PlusCircle, MinusCircle,
   Wallet, UserPlus, CheckCircle, X, BarChart3, Printer, TrendingDown, TrendingUp,
@@ -442,6 +442,7 @@ export default function App(){
   const [activePage,setActivePage]=useState('pos');
   const [stockOpen,setStockOpen]=useState(true);
   const [mobileMenuOpen,setMobileMenuOpen]=useState(false);
+  const [mobilePosTab,setMobilePosTab]=useState<'products'|'cart'>('products');
   // ── POS ───────────────────────────────────────────────────────────────
   const [cart,setCart]=useState<any[]>([]);
   const [searchQuery,setSearchQuery]=useState('');
@@ -675,8 +676,30 @@ export default function App(){
       onSnapshot(collection(db,'staff'),s=>setStaffList(s.docs.map(d=>({id:d.id,...d.data()})))),
       onSnapshot(collection(db,'staffLogs'),s=>setStaffLogs(s.docs.map(d=>({id:d.id,...d.data()})))),
       onSnapshot(collection(db,'quotes'),s=>setQuotes(s.docs.map(d=>({id:d.id,...d.data()})))),
+      onSnapshot(doc(db,'appConfig','receiptSettings'),snap=>{
+        if(snap.exists()){
+          const cloudData={...DEFAULT_SETTINGS,...snap.data()} as ReceiptSettings;
+          setReceiptSettings(cloudData);
+          setDraftSettings(cloudData);
+          saveSettingsLS(cloudData);
+        }
+      }),
     ];
     return()=>uns.forEach(u=>u());
+  },[]);
+
+  // ── Mobil PWA (Tam Ekran Web Uygulaması) Meta Etiketleri ──────────────
+  useEffect(()=>{
+    const setMeta=(name:string,contentVal:string)=>{
+      let m=document.querySelector(`meta[name="${name}"]`);
+      if(!m){m=document.createElement('meta');m.setAttribute('name',name);document.head.appendChild(m);}
+      m.setAttribute('content',contentVal);
+    };
+    setMeta('viewport','width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover');
+    setMeta('apple-mobile-web-app-capable','yes');
+    setMeta('apple-mobile-web-app-status-bar-style','black-translucent');
+    setMeta('mobile-web-app-capable','yes');
+    setMeta('theme-color','#09090b');
   },[]);
 
   // ── Mobil Kamera Barkod İşleyici (Ultra Hızlı & Beyaz Ekran Korumalı) ──
@@ -2002,7 +2025,14 @@ export default function App(){
   };
 
   // ── Receipt settings ──────────────────────────────────────────────────
-  const saveRSettings=()=>{setReceiptSettings({...draftSettings});saveSettingsLS(draftSettings);setSettingsSaved(true);setTimeout(()=>setSettingsSaved(false),2000);};
+  const saveRSettings=async()=>{
+    const next={...draftSettings};
+    setReceiptSettings(next);
+    saveSettingsLS(next);
+    try{await setDoc(doc(db,'appConfig','receiptSettings'),next,{merge:true});}catch{}
+    setSettingsSaved(true);
+    setTimeout(()=>setSettingsSaved(false),2000);
+  };
   const upDraft=(k:keyof ReceiptSettings,v:any)=>setDraftSettings(prev=>({...prev,[k]:v}));
   const activePrintData=mergedPrint||printSale||lastSale;
   const demoSale={id:'DEMO123456',customerName:'Örnek Müşteri A.Ş.',customerTax:'1234567890',method:'Veresiye',date:'16.03.2026 14:30:00',staffName:'Kasiyer',items:[{name:'Dove Sabun 100gr',qty:5,grossPrice:60,taxRate:20},{name:'Ariel Deterjan 3kg',qty:2,grossPrice:185,taxRate:20}],subTotal:780,discountAmount:30,discountPct:4,total:750};
@@ -2013,7 +2043,7 @@ export default function App(){
 
   return (
     <>
-    <div className={'flex h-screen text-zinc-100 transition-colors duration-300 print:hidden relative '+(flash?'bg-emerald-900':'bg-zinc-950')}>
+    <div className={'flex h-[100dvh] overflow-hidden text-zinc-100 transition-colors duration-300 print:hidden relative select-none sm:select-auto '+(flash?'bg-emerald-900':'bg-zinc-950')}>
 
       {/* ══════════════ SIDEBAR ═══════════════════════════════════════════ */}
       <aside style={{transform:mobileMenuOpen?'none':'translateX(-100%)'}} className="fixed lg:!transform-none lg:relative z-[400] w-64 h-full bg-zinc-900 border-r border-zinc-800 flex flex-col shrink-0 transition-transform duration-300 lg:translate-x-0">
@@ -2042,7 +2072,7 @@ export default function App(){
             {p:'returns',icon:<RefreshCw size={15}/>,label:'İade / Değişim',perm:'returns'},
             {p:'purchases',icon:<ArrowDownToLine size={15}/>,label:'Alış Faturaları',perm:'purchases'},
           ].filter(t=>canDo(t.perm)).map(t=>(
-            <button key={t.p} onClick={()=>setActivePage(t.p)} className={'w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all text-sm font-medium '+(activePage===t.p?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white')}>
+            <button key={t.p} onClick={()=>{setActivePage(t.p);setMobileMenuOpen(false);}} className={'w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all text-sm font-medium '+(activePage===t.p?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white')}>
               {t.icon}<span className="flex-1 text-left">{t.label}</span>
               {(t as any).badge&&<span className="bg-orange-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">{(t as any).badge}</span>}
               {(t as any).badge2&&<span className="bg-purple-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">{(t as any).badge2}</span>}
@@ -2066,7 +2096,7 @@ export default function App(){
                   {p:'stock.tracking',icon:<Boxes size={13}/>,label:'Stok Takibi'},
                   {p:'stock.bulk',icon:<Zap size={13}/>,label:'Toplu Fiyat Güncelle'},
                 ].map(item=>(
-                  <button key={item.p} onClick={()=>setActivePage(item.p)} className={'w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm '+(activePage===item.p?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-500 hover:bg-zinc-800 hover:text-white')}>
+                  <button key={item.p} onClick={()=>{setActivePage(item.p);setMobileMenuOpen(false);}} className={'w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm '+(activePage===item.p?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-500 hover:bg-zinc-800 hover:text-white')}>
                     {item.icon}<span>{item.label}</span>
                   </button>
                 ))}
@@ -2074,12 +2104,12 @@ export default function App(){
             )}
           </div>
 
-          {canDo('customers')&&<button onClick={()=>setActivePage('customers')} className={'w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium mt-1 '+(activePage==='customers'||activePage==='customers.categories'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white')}><Users size={15}/><span className="flex-1 text-left">Müşteri & Tedarikçi</span></button>}
+          {canDo('customers')&&<button onClick={()=>{setActivePage('customers');setMobileMenuOpen(false);}} className={'w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium mt-1 '+(activePage==='customers'||activePage==='customers.categories'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white')}><Users size={15}/><span className="flex-1 text-left">Müşteri & Tedarikçi</span></button>}
           <div className="border-t border-zinc-800/60 my-2"/>
-          <button onClick={()=>setActivePage('dashboard')} className={'w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium '+(activePage==='dashboard'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white')}><BarChart3 size={15}/><span>Dashboard</span></button>
-          {(canDo('reports.genel')||canDo('reports.gunSonu')||canDo('reports.kdv')||currentStaff?.role==='admin')&&<button onClick={()=>setActivePage('reports')} className={'w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium '+(activePage==='reports'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white')}><BarChart3 size={15}/><span>Rapor & Analiz</span></button>}
-          {currentStaff.role==='admin'&&<button onClick={()=>setActivePage('personel')} className={'w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium '+(activePage==='personel'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white')}><UserCog size={15}/><span>Personel</span></button>}
-          {(canDo('receipt')||currentStaff?.role==='admin')&&<button onClick={()=>setActivePage('settings')} className={'w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium '+(activePage==='settings'||activePage==='receipt'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white')}><Settings size={15}/><span>Ayarlar</span></button>}
+          <button onClick={()=>{setActivePage('dashboard');setMobileMenuOpen(false);}} className={'w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium '+(activePage==='dashboard'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white')}><BarChart3 size={15}/><span>Dashboard</span></button>
+          {(canDo('reports.genel')||canDo('reports.gunSonu')||canDo('reports.kdv')||currentStaff?.role==='admin')&&<button onClick={()=>{setActivePage('reports');setMobileMenuOpen(false);}} className={'w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium '+(activePage==='reports'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white')}><BarChart3 size={15}/><span>Rapor & Analiz</span></button>}
+          {currentStaff.role==='admin'&&<button onClick={()=>{setActivePage('personel');setMobileMenuOpen(false);}} className={'w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium '+(activePage==='personel'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white')}><UserCog size={15}/><span>Personel</span></button>}
+          {(canDo('receipt')||currentStaff?.role==='admin')&&<button onClick={()=>{setActivePage('settings');setMobileMenuOpen(false);}} className={'w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium '+(activePage==='settings'||activePage==='receipt'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white')}><Settings size={15}/><span>Ayarlar</span></button>}
         </nav>
       </aside>
 
@@ -2098,7 +2128,7 @@ export default function App(){
 
         {/* ═══ DASHBOARD ════════════════════════════════════════════════════ */}
         {activePage==='dashboard'&&(
-          <div className="p-7 w-full overflow-y-auto">
+          <div className="p-4 sm:p-7 w-full overflow-y-auto">
             <div className="flex items-center justify-between mb-6">
               <div>
                 <h2 className="text-3xl font-black flex items-center gap-3"><BarChart3 className="text-emerald-500"/> Dashboard</h2>
@@ -2179,41 +2209,75 @@ export default function App(){
         )}
 
         {activePage==='pos'&&(
-          <div className="flex flex-col lg:flex-row w-full">
-            <div className="flex-1 p-5 flex flex-col overflow-hidden">
-              <div className="flex items-center gap-2.5 mb-4 flex-wrap">
-                <div className="relative flex-1 min-w-[200px]"><Search className="absolute left-3.5 top-3 text-zinc-500" size={16}/><input type="text" value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Ürün adı veya barkod..." className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl py-3 pl-11 pr-4 outline-none focus:border-emerald-500 text-sm"/></div>
-                <button type="button" onClick={()=>openBarcodeScanner('pos')} className="px-4 py-3 rounded-xl font-black text-sm flex items-center gap-2 bg-emerald-500 text-zinc-950 hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/20"><span className="text-base leading-none">📷</span> Barkod Okut</button>
-                <button onClick={()=>setActivePage('sales.history')} className="px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-2 border bg-zinc-900 text-emerald-400 border-zinc-800 hover:border-emerald-500 hover:bg-emerald-500/10 transition-all"><Receipt size={15}/> Son Fişler ({sales.filter(s=>s.method!=='Tahsilat').length})</button>
+          <div className="flex flex-col lg:flex-row w-full h-full overflow-hidden">
+            {/* Mobil POS Sekme Seçici (Ürünler / Sepet) */}
+            <div className="lg:hidden flex items-center gap-2 px-3 pt-2.5 pb-1 bg-zinc-950 border-b border-zinc-800/80 shrink-0">
+              <button
+                type="button"
+                onClick={()=>setMobilePosTab('products')}
+                className={'flex-1 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition-all '+(mobilePosTab==='products'?'bg-emerald-500 text-zinc-950 shadow-lg shadow-emerald-500/20':'bg-zinc-900 text-zinc-400 border border-zinc-800')}
+              >
+                <Package size={14}/> Ürünler ({products.length})
+              </button>
+              <button
+                type="button"
+                onClick={()=>setMobilePosTab('cart')}
+                className={'flex-1 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition-all relative '+(mobilePosTab==='cart'?'bg-emerald-500 text-zinc-950 shadow-lg shadow-emerald-500/20':'bg-zinc-900 text-zinc-300 border border-zinc-800')}
+              >
+                <ShoppingCart size={14}/> Sepet ({cart.reduce((a:number,b:any)=>a+(Number(b.qty)||1),0)}) · ₺{finalTotal.toFixed(0)}
+              </button>
+            </div>
+
+            <div className={'flex-1 p-3 sm:p-5 flex-col overflow-hidden '+(mobilePosTab==='cart'?'hidden lg:flex':'flex')}>
+              <div className="flex items-center gap-2 mb-3 flex-wrap">
+                <div className="relative flex-1 min-w-[160px]"><Search className="absolute left-3.5 top-3 text-zinc-500" size={16}/><input type="text" value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Ürün adı veya barkod..." className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl py-2.5 sm:py-3 pl-10 pr-3 outline-none focus:border-emerald-500 text-sm"/></div>
+                <button type="button" onClick={()=>openBarcodeScanner('pos')} className="px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-xl font-black text-xs sm:text-sm flex items-center gap-1.5 bg-emerald-500 text-zinc-950 hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/20 shrink-0"><span className="text-base leading-none">📷</span> Okut</button>
+                <button onClick={()=>setActivePage('sales.history')} className="px-3 py-2.5 sm:px-4 sm:py-3 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-1.5 border bg-zinc-900 text-emerald-400 border-zinc-800 hover:border-emerald-500 hover:bg-emerald-500/10 transition-all shrink-0"><Receipt size={14}/> Son Fişler</button>
                 {orderMode&&(
-                  <button onClick={()=>setOrderMode(false)} className="px-4 py-3 rounded-xl font-black text-sm flex items-center gap-2 border bg-orange-500 text-zinc-950 border-orange-500 hover:bg-orange-400 transition-all"><X size={15}/> Sipariş Modundan Çık</button>
+                  <button onClick={()=>setOrderMode(false)} className="px-3 py-2.5 rounded-xl font-black text-xs flex items-center gap-1.5 border bg-orange-500 text-zinc-950 border-orange-500 hover:bg-orange-400 transition-all"><X size={14}/> Siparişten Çık</button>
                 )}
               </div>
               {orderMode&&(
-                <div className="bg-orange-500/10 border border-orange-500/30 rounded-2xl p-4 mb-4 flex flex-wrap items-center gap-3">
+                <div className="bg-orange-500/10 border border-orange-500/30 rounded-2xl p-3 mb-3 flex flex-wrap items-center gap-2">
                   <span className="text-orange-400 font-bold text-xs">🛍 Sipariş Modu</span>
-                  <select value={orderCustomer} onChange={e=>setOrderCustomer(e.target.value)} className="bg-zinc-900 border border-zinc-700 text-white px-3 py-2 rounded-xl text-sm outline-none"><option value="">— Müşteri Seç —</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
-                  <input value={orderNote} onChange={e=>setOrderNote(e.target.value)} placeholder="Not..." className="bg-zinc-900 border border-zinc-700 text-white px-3 py-2 rounded-xl text-sm outline-none flex-1 min-w-[120px]"/>
-                  <div className="flex items-center gap-2"><label className="text-zinc-500 text-xs font-bold">Teslim:</label><input type="date" value={orderDeliveryDate} onChange={e=>setOrderDeliveryDate(e.target.value)} className="bg-zinc-900 border border-zinc-700 text-white px-3 py-2 rounded-xl text-sm outline-none"/></div>
+                  <select value={orderCustomer} onChange={e=>setOrderCustomer(e.target.value)} className="bg-zinc-900 border border-zinc-700 text-white px-2.5 py-1.5 rounded-xl text-xs sm:text-sm outline-none"><option value="">— Müşteri Seç —</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
+                  <input value={orderNote} onChange={e=>setOrderNote(e.target.value)} placeholder="Not..." className="bg-zinc-900 border border-zinc-700 text-white px-2.5 py-1.5 rounded-xl text-xs sm:text-sm outline-none flex-1 min-w-[110px]"/>
+                  <div className="flex items-center gap-1.5"><label className="text-zinc-500 text-xs font-bold">Teslim:</label><input type="date" value={orderDeliveryDate} onChange={e=>setOrderDeliveryDate(e.target.value)} className="bg-zinc-900 border border-zinc-700 text-white px-2.5 py-1.5 rounded-xl text-xs sm:text-sm outline-none"/></div>
                 </div>
               )}
-              <div className="flex-1 overflow-y-auto grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 lg:gap-3 content-start">
-                {products.filter(p=>(p.name||'').toLowerCase().includes(searchQuery.toLowerCase())||(p.barcode||'').includes(searchQuery)).map(p=>(
-                  <button key={p.id} onClick={()=>addToCart(p)} className={'border p-4 rounded-2xl text-left hover:border-emerald-500 transition-all flex flex-col justify-between h-32 group '+((p.stock||0)===0?'bg-zinc-900/50 border-red-900/30 opacity-60':'bg-zinc-900 border-zinc-800 hover:bg-zinc-800/50')}>
-                    <span className="font-bold text-zinc-200 group-hover:text-emerald-400 line-clamp-2 text-sm">{p.name||'İsimsiz'}</span>
+              <div className="flex-1 overflow-y-auto grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3 content-start pb-20 lg:pb-2">
+                {products.filter(p=>(p.name||'').toLowerCase().includes(searchQuery.toLowerCase())||(p.barcode||'').includes(searchQuery)).map(p=>{
+                  const inCartQty=cart.find((i:any)=>i.id===p.id)?.qty||0;
+                  return(
+                  <button key={p.id} onClick={()=>addToCart(p)} className={'border p-3 sm:p-4 rounded-2xl text-left hover:border-emerald-500 active:scale-95 transition-all flex flex-col justify-between h-28 sm:h-32 group relative '+((p.stock||0)===0?'bg-zinc-900/50 border-red-900/30 opacity-60':'bg-zinc-900 border-zinc-800 hover:bg-zinc-800/50')}>
+                    {inCartQty>0&&<span className="absolute top-2 right-2 bg-emerald-500 text-zinc-950 font-black text-[10px] px-2 py-0.5 rounded-full shadow">Sepette ×{inCartQty}</span>}
+                    <span className="font-bold text-zinc-200 group-hover:text-emerald-400 line-clamp-2 text-xs sm:text-sm pr-6">{p.name||'İsimsiz'}</span>
                     <div>
                       {p.category&&<span className="text-[9px] font-bold px-2 py-0.5 rounded-full mb-1 inline-block" style={catStyleOf(p.category||'')}>{p.category}</span>}
                       <div className="flex justify-between items-center">
                         <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded '+((p.stock||0)===0?'bg-red-900/40 text-red-400':(p.stock||0)<=lowStockLimit?'bg-orange-900/30 text-orange-400':'bg-zinc-800 text-zinc-500')}>S:{p.stock||0}</span>
-                        <span className="text-xl font-black text-white">₺{p.grossPrice||0}</span>
+                        <span className="text-lg sm:text-xl font-black text-white">₺{p.grossPrice||0}</span>
                       </div>
                     </div>
                   </button>
-                ))}
+                );})}
               </div>
+              {/* Mobil Yüzen Sepete Git Çubuğu (Sepette ürün varken Ürünler sekmesinde görünür) */}
+              {cart.length>0&&(
+                <div className="lg:hidden pt-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={()=>setMobilePosTab('cart')}
+                    className="w-full bg-emerald-500 text-zinc-950 py-3.5 px-5 rounded-2xl font-black text-sm flex items-center justify-between shadow-xl shadow-emerald-500/25 active:scale-95 transition-all"
+                  >
+                    <span className="flex items-center gap-2"><ShoppingCart size={17}/> Sepeti Gör & Ödeme Al ({cart.reduce((a:number,b:any)=>a+(Number(b.qty)||1),0)} ürün)</span>
+                    <span className="text-base font-black bg-zinc-950/15 px-2.5 py-1 rounded-xl">₺{finalTotal.toFixed(2)} →</span>
+                  </button>
+                </div>
+              )}
             </div>
             {/* Sepet */}
-            <div className="w-full lg:w-[400px] max-h-[50vh] lg:max-h-full bg-zinc-900 border-t lg:border-t-0 lg:border-l border-zinc-800 flex flex-col shadow-2xl">
+            <div className={'w-full lg:w-[400px] h-full bg-zinc-900 border-t lg:border-t-0 lg:border-l border-zinc-800 flex-col shadow-2xl overflow-hidden '+(mobilePosTab==='products'?'hidden lg:flex':'flex')}>
               <div className="p-4 border-b border-zinc-800">
                 <div className="flex items-center gap-2 mb-3 font-black text-base"><ShoppingCart className="text-emerald-500" size={17}/>{orderMode?'📦 YENİ SİPARİŞ':'SATIŞ FİŞİ'}</div>
                 {!orderMode&&<select value={cartCustomer} onChange={e=>setCartCustomer(e.target.value)} className="w-full bg-zinc-950 border border-zinc-700 p-2.5 rounded-xl text-white outline-none text-sm font-bold"><option value="">-- Perakende --</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>}
@@ -2358,7 +2422,7 @@ export default function App(){
 
         {/* ═══ ÖNCEKİ FİŞLERDEN FİYAT GÖREBİLME EKRANI ════════════════════ */}
         {activePage==='sales.prices'&&(
-          <div className="p-7 w-full overflow-y-auto">
+          <div className="p-4 sm:p-7 w-full overflow-y-auto">
             <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
               <div>
                 <h2 className="text-3xl font-black flex items-center gap-3"><BadgePercent className="text-amber-400"/> Önceki Fişlerden Fiyat Gör</h2>
@@ -2801,7 +2865,7 @@ export default function App(){
 
         {/* ═══ SON FİŞLER & SATIŞ GEÇMİŞİ ════════════════════════════════ */}
         {activePage==='sales.history'&&(
-          <div className="p-7 w-full overflow-y-auto">
+          <div className="p-4 sm:p-7 w-full overflow-y-auto">
             <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
               <div>
                 <h2 className="text-3xl font-black flex items-center gap-3"><Receipt className="text-emerald-500"/> Son Fişler & Satış Geçmişi</h2>
@@ -2971,7 +3035,7 @@ export default function App(){
 
         {/* ═══ SİPARİŞLİ SATIŞLAR ════════════════════════════════════════ */}
         {activePage==='orders'&&(
-          <div className="p-7 w-full overflow-y-auto">
+          <div className="p-4 sm:p-7 w-full overflow-y-auto">
             <div className="flex items-center justify-between mb-6">
               <div><h2 className="text-3xl font-black flex items-center gap-3"><ShoppingBag className="text-orange-400"/> Siparişli Satışlar</h2><p className="text-zinc-500 text-sm mt-0.5">Bekleyen ve işlemdeki siparişleri yönet</p></div>
               <button onClick={()=>{setOrderMode(true);setActivePage('pos');}} className="bg-orange-500 hover:bg-orange-400 text-zinc-950 px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 text-sm"><Plus size={16}/> Yeni Sipariş (POS)</button>
@@ -3195,7 +3259,7 @@ export default function App(){
                 </div>
               </div>
             </div>
-            <div className="flex-1 overflow-y-auto p-7">
+            <div className="flex-1 overflow-y-auto p-4 sm:p-7">
               <div className="flex items-center justify-between mb-5">
                 <h2 className="text-2xl font-black flex items-center gap-2"><Handshake className="text-purple-400"/> Teklifler</h2>
                 <div className="flex gap-2">
@@ -3247,7 +3311,7 @@ export default function App(){
 
         {/* ═══ İADE / DEĞİŞİM ════════════════════════════════════════════ */}
         {activePage==='returns'&&(
-          <div className="p-7 w-full overflow-y-auto">
+          <div className="p-4 sm:p-7 w-full overflow-y-auto">
             <h2 className="text-3xl font-black flex items-center gap-3 mb-6"><RefreshCw className="text-red-400"/> İade & Değişim</h2>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               <div className="space-y-5">
@@ -3327,7 +3391,7 @@ export default function App(){
           <div className="flex flex-col w-full overflow-hidden">
 
             {activePage==='stock.products'&&(
-              <div className="flex-1 overflow-y-auto p-7">
+              <div className="flex-1 overflow-y-auto p-4 sm:p-7">
                 <div className="flex justify-between items-center mb-6">
                   <h2 className="text-3xl font-black flex items-center gap-3"><Package className="text-emerald-500"/> Ürünler</h2>
                   <div className="flex gap-3">
@@ -3443,7 +3507,7 @@ export default function App(){
                     <span className="bg-zinc-950 text-zinc-400 px-3 py-1.5 rounded-full">Varyantli: {filteredProducts.filter(p=>String(p.variantGroup||'').trim()!=='').length}</span>
                   </div>
                 </div>
-                <div className="bg-zinc-900 rounded-3xl overflow-hidden border border-zinc-800">
+                <div className="bg-zinc-900 rounded-3xl overflow-x-auto border border-zinc-800">
                   <table className="w-full text-left">
                     <thead className="bg-zinc-950 text-zinc-500 text-xs font-bold uppercase tracking-widest">
                       <tr><th className="p-4">Ürün</th><th className="p-4">Barkod</th><th className="p-4">Kategori</th><th className="p-4">Birim</th><th className="p-4 text-right">Alış</th><th className="p-4 text-right">Satış</th><th className="p-4 text-center">Stok</th><th className="p-4 text-center">İşlem</th></tr>
@@ -3486,7 +3550,7 @@ export default function App(){
             )}
 
             {activePage==='stock.movements'&&(
-              <div className="flex-1 overflow-y-auto p-7">
+              <div className="flex-1 overflow-y-auto p-4 sm:p-7">
                 <h2 className="text-2xl font-black flex items-center gap-2 mb-5"><ArrowUpDown className="text-emerald-500"/> Stok Hareketleri</h2>
                 <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 mb-5 flex flex-wrap items-center gap-3">
                   <Filter size={14} className="text-zinc-500"/>
@@ -3525,7 +3589,7 @@ export default function App(){
             )}
 
             {activePage==='stock.tracking'&&(
-              <div className="flex-1 overflow-y-auto p-7">
+              <div className="flex-1 overflow-y-auto p-4 sm:p-7">
                 <h2 className="text-2xl font-black flex items-center gap-2 mb-6"><Boxes className="text-emerald-500"/> Stok Takibi</h2>
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-5 mb-6">
                   <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl"><p className="text-zinc-500 text-xs font-bold uppercase mb-1">Toplam Ürün</p><p className="text-3xl font-black text-white">{products.length}</p></div>
@@ -3541,7 +3605,7 @@ export default function App(){
                   <button onClick={()=>setStockFilter('out')} className={stockFilter==='out'?"px-3 py-2.5 rounded-xl text-sm font-bold border bg-red-500 text-white border-red-500":"px-3 py-2.5 rounded-xl text-sm font-bold border bg-zinc-800 text-zinc-400 border-zinc-700"}>Tükenen({outOfStock})</button>
                   <div className="ml-auto flex items-center gap-2"><span className="text-zinc-600 text-xs">Eşik:</span><input type="number" value={lowStockLimit} onChange={e=>setLowStockLimit(parseInt(e.target.value)||5)} className="w-14 bg-zinc-900 border border-zinc-700 text-white rounded-xl p-2 text-center text-sm outline-none font-bold"/></div>
                 </div>
-                <div className="bg-zinc-900 rounded-3xl border border-zinc-800 overflow-hidden">
+                <div className="bg-zinc-900 rounded-3xl border border-zinc-800 overflow-x-auto">
                   <table className="w-full">
                     <thead className="bg-zinc-950 text-zinc-500 text-xs font-bold uppercase tracking-widest">
                       <tr><th className="p-4 text-left">Ürün</th><th className="p-4 text-left">Kategori</th><th className="p-4 text-right">Stok</th><th className="p-4 text-right">Satış</th><th className="p-4 text-right">Stok Değeri</th></tr>
@@ -3567,7 +3631,7 @@ export default function App(){
             )}
 
             {activePage==='stock.count'&&(
-              <div className="flex-1 overflow-y-auto p-7">
+              <div className="flex-1 overflow-y-auto p-4 sm:p-7">
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
                   <div><h2 className="text-2xl font-black flex items-center gap-2"><ClipboardCheck className="text-emerald-500"/> Stok Sayımı</h2><p className="text-zinc-500 text-sm mt-0.5">Fiziksel sayım sonuçlarını girin veya kamerayla barkod okutarak sayımı +1 artırın.</p></div>
                   <div className="flex items-center gap-2.5">
@@ -3575,7 +3639,7 @@ export default function App(){
                     <button onClick={handleSaveCount} className={'px-6 py-3 rounded-2xl font-black flex items-center gap-2 '+(countSaved?'bg-emerald-400 text-zinc-950':'bg-emerald-500 text-zinc-950 hover:bg-emerald-400 shadow-lg shadow-emerald-500/20')}>{countSaved?<><CheckCircle size={17}/> Kaydedildi!</>:<><Save size={17}/> Kaydet</>}</button>
                   </div>
                 </div>
-                <div className="bg-zinc-900 rounded-3xl overflow-hidden border border-zinc-800">
+                <div className="bg-zinc-900 rounded-3xl overflow-x-auto border border-zinc-800">
                   <div className="grid grid-cols-12 gap-0 bg-zinc-950 text-zinc-500 text-xs font-bold uppercase tracking-widest">
                     <div className="col-span-5 p-4">Ürün</div><div className="col-span-2 p-4">Kategori</div><div className="col-span-2 p-4 text-center">Sistemdeki</div><div className="col-span-2 p-4 text-center">Sayılan</div><div className="col-span-1 p-4 text-center">Fark</div>
                   </div>
@@ -3599,7 +3663,7 @@ export default function App(){
             )}
 
             {activePage==='stock.category'&&(
-              <div className="flex-1 overflow-y-auto p-7">
+              <div className="flex-1 overflow-y-auto p-4 sm:p-7">
                 <h2 className="text-2xl font-black flex items-center gap-2 mb-6"><FolderOpen className="text-emerald-500"/> Ürün Kategorileri</h2>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl">
@@ -3681,7 +3745,7 @@ export default function App(){
 
 
             {activePage==='stock.bulk'&&(
-              <div className="flex-1 overflow-y-auto p-7">
+              <div className="flex-1 overflow-y-auto p-4 sm:p-7">
                 <div className="flex items-center justify-between mb-6">
                  <div>
                     <h2 className="text-2xl font-black flex items-center gap-2"><Zap className="text-yellow-400"/> Toplu Fiyat Güncelleme</h2>
@@ -3707,7 +3771,7 @@ export default function App(){
                     </button>
                   </div>
                 </div>
-                <div className="bg-zinc-900 rounded-3xl overflow-hidden border border-zinc-800">
+                <div className="bg-zinc-900 rounded-3xl overflow-x-auto border border-zinc-800">
                   <table className="w-full text-left">
                     <thead className="bg-zinc-950 text-zinc-500 text-xs font-bold uppercase tracking-widest">
                       <tr>
@@ -3760,7 +3824,7 @@ export default function App(){
 
         {/* ═══ ALIŞ FATURALARI ════════════════════════════════════════════ */}
         {activePage==='purchases'&&(
-          <div className="p-7 w-full overflow-y-auto">
+          <div className="p-4 sm:p-7 w-full overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
               <div><h2 className="text-3xl font-black flex items-center gap-2"><ArrowDownToLine className="text-blue-400"/> Alış Faturaları</h2><p className="text-zinc-500 text-sm mt-0.5">Stok otomatik güncellenir.</p></div>
               <button onClick={()=>setShowPurchaseForm(!showPurchaseForm)} className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-2xl font-bold flex items-center gap-2 text-sm shadow-lg shadow-blue-600/20"><Plus size={16}/> Yeni Alış Faturası</button>
@@ -3824,7 +3888,7 @@ export default function App(){
 
         {/* ═══ CARİ HESAPLAR ══════════════════════════════════════════════ */}
         {activePage==='customers'&&(
-          <div className="p-7 w-full overflow-y-auto">
+          <div className="p-4 sm:p-7 w-full overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-3xl font-black">Cari Hesaplar</h2>
               <div className="flex gap-3">
@@ -3874,8 +3938,8 @@ export default function App(){
         )}
 
         {activePage==='customers.categories'&&(
-          <div className="p-7 w-full overflow-y-auto">
-            <div className="flex items-center gap-3 mb-6"><button onClick={()=>setActivePage('customers')} className="text-zinc-500 hover:text-white"><ChevronDown size={18} className="-rotate-90"/></button><h2 className="text-2xl font-black flex items-center gap-2"><FolderOpen className="text-emerald-500"/> Müşteri Kategorileri</h2></div>
+          <div className="p-4 sm:p-7 w-full overflow-y-auto">
+            <div className="flex items-center gap-3 mb-6"><button onClick={()=>{setActivePage('customers');setMobileMenuOpen(false);}} className="text-zinc-500 hover:text-white"><ChevronDown size={18} className="-rotate-90"/></button><h2 className="text-2xl font-black flex items-center gap-2"><FolderOpen className="text-emerald-500"/> Müşteri Kategorileri</h2></div>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl">
                 <h4 className="font-black text-lg mb-4 border-b border-zinc-800 pb-3">Yeni Kategori</h4>
@@ -3902,7 +3966,7 @@ export default function App(){
 
         {/* ═══ RAPOR ══════════════════════════════════════════════════════ */}
         {activePage==='reports'&&(
-          <div className="p-7 w-full overflow-y-auto">
+          <div className="p-4 sm:p-7 w-full overflow-y-auto">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-3xl font-black">Rapor & Analiz</h2>
               <button onClick={()=>handleParasutExport(sales.filter(s=>s.method!=='Tahsilat'),'parasut_tum_'+(new Date().toISOString().slice(0,10))+'.xlsx')} disabled={!parasutReady} className={'bg-blue-600 text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 text-sm shadow-lg shadow-blue-600/20 '+(parasutReady?'hover:bg-blue-500':'opacity-40 cursor-not-allowed')}><FileSpreadsheet size={16}/> Paraşüt'e Aktar</button>
@@ -4184,7 +4248,7 @@ export default function App(){
 
         {/* ═══ PERSONEL YÖNETİMİ ══════════════════════════════════════════ */}
         {activePage==='personel'&&currentStaff?.role==='admin'&&(
-          <div className="p-7 w-full overflow-y-auto">
+          <div className="p-4 sm:p-7 w-full overflow-y-auto">
             <h2 className="text-3xl font-black flex items-center gap-3 mb-6"><UserCog className="text-emerald-500"/> Personel Yönetimi</h2>
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
               <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl">
@@ -4267,7 +4331,7 @@ export default function App(){
               <h1 className="text-base font-black text-zinc-400 mb-3 flex items-center gap-2"><Settings size={15}/> Ayarlar</h1>
             </div>
             {settingsTab==='parasut'&&(
-              <div className="flex-1 overflow-y-auto p-7">
+              <div className="flex-1 overflow-y-auto p-4 sm:p-7">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl">
                     <h4 className="font-black text-lg mb-4 border-b border-zinc-800 pb-3 flex items-center gap-2"><Settings size={15} className="text-zinc-400"/> Paraşüt Bağlantı Ayarları</h4>
@@ -4457,6 +4521,55 @@ export default function App(){
           </div>
         )}
 
+        </div>
+
+        {/* ═══ MOBİL ALT UYGULAMA BAR (BOTTOM NAVIGATION BAR) ═════════════ */}
+        <div className="lg:hidden bg-zinc-900/95 backdrop-blur-md border-t border-zinc-800 px-2 py-1.5 flex items-center justify-around shrink-0 z-[380]">
+          <button
+            type="button"
+            onClick={()=>{setActivePage('pos');setMobilePosTab('products');}}
+            className={'flex flex-col items-center justify-center py-1 px-3 rounded-xl transition-all '+(activePage==='pos'&&mobilePosTab==='products'?'text-emerald-400 font-black':'text-zinc-400')}
+          >
+            <ShoppingCart size={18}/>
+            <span className="text-[10px] mt-0.5">Satış</span>
+          </button>
+          <button
+            type="button"
+            onClick={()=>{setActivePage('pos');setMobilePosTab('cart');}}
+            className={'flex flex-col items-center justify-center py-1 px-3 rounded-xl transition-all relative '+(activePage==='pos'&&mobilePosTab==='cart'?'text-emerald-400 font-black':'text-zinc-400')}
+          >
+            <ShoppingBag size={18}/>
+            {cart.length>0&&<span className="absolute top-0.5 right-1.5 bg-emerald-500 text-zinc-950 text-[9px] font-black w-4 h-4 rounded-full flex items-center justify-center">{cart.reduce((a:number,b:any)=>a+(Number(b.qty)||1),0)}</span>}
+            <span className="text-[10px] mt-0.5">Sepet</span>
+          </button>
+          <button
+            type="button"
+            onClick={()=>{setActivePage('pos');openBarcodeScanner('pos');}}
+            className="bg-emerald-500 text-zinc-950 px-4 py-2 rounded-2xl font-black text-xs flex items-center gap-1 shadow-lg shadow-emerald-500/25 active:scale-95"
+          >
+            <span>📷</span> Okut
+          </button>
+          <button
+            type="button"
+            onClick={()=>setActivePage('orders')}
+            className={'flex flex-col items-center justify-center py-1 px-3 rounded-xl transition-all relative '+(activePage==='orders'?'text-orange-400 font-black':'text-zinc-400')}
+          >
+            <ClipboardCheck size={18}/>
+            {orders.filter(o=>o.status==='bekliyor'||o.status==='hazirlaniyor').length>0&&(
+              <span className="absolute top-0.5 right-1.5 bg-orange-500 text-white text-[9px] font-black w-4 h-4 rounded-full flex items-center justify-center">
+                {orders.filter(o=>o.status==='bekliyor'||o.status==='hazirlaniyor').length}
+              </span>
+            )}
+            <span className="text-[10px] mt-0.5">Sipariş</span>
+          </button>
+          <button
+            type="button"
+            onClick={()=>setActivePage('customers')}
+            className={'flex flex-col items-center justify-center py-1 px-3 rounded-xl transition-all '+(activePage==='customers'?'text-emerald-400 font-black':'text-zinc-400')}
+          >
+            <Users size={18}/>
+            <span className="text-[10px] mt-0.5">Cariler</span>
+          </button>
         </div>
       </main>
 
