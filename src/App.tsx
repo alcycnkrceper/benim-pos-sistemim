@@ -354,6 +354,17 @@ function ReceiptTemplate({sale,settings,preview=false}:{sale:any;settings:Receip
           </div>
         ):null}
       </div>
+      {(sale.returnedItems||[]).length>0&&(
+        <div style={{marginTop:3,borderTop:'1px dotted #000',paddingTop:3,fontSize:Math.max(8,tblFs-2)+'px',lineHeight:1.2}}>
+          <div style={{fontWeight:900}}>İADE DÜŞÜLEN ÜRÜNLER:</div>
+          {(sale.returnedItems||[]).map((ri:any,idx:number)=>(
+            <div key={idx} style={{display:'flex',justifyContent:'space-between'}}>
+              <span>{ri.name} ×{ri.qty}</span>
+              <span>-₺{((Number(ri.grossPrice)||0)*(Number(ri.qty)||1)).toFixed(2)}</span>
+            </div>
+          ))}
+        </div>
+      )}
       {(settings.showFooter??true)&&(settings.footerLine1||settings.footerLine2)&&(
         <div style={{marginTop:4,textAlign:'center',borderTop:divider,paddingTop:3,fontSize:Math.max(8,tblFs-2)+'px',fontWeight:700}}>
           {[settings.footerLine1,settings.footerLine2].filter(Boolean).join(' • ')}
@@ -447,6 +458,7 @@ export default function App(){
   const [cart,setCart]=useState<any[]>([]);
   const [searchQuery,setSearchQuery]=useState('');
   const [cartCustomer,setCartCustomer]=useState('');
+  const [cartCustomCustomerName,setCartCustomCustomerName]=useState('');
   const [discountPct,setDiscountPct]=useState('');
   const [discountAmtInput,setDiscountAmtInput]=useState('');
   const [flash,setFlash]=useState(false);
@@ -536,6 +548,7 @@ export default function App(){
   const [editingSale,setEditingSale]=useState<any>(null);
   const [editSaleCart,setEditSaleCart]=useState<any[]>([]);
   const [editSaleCustomer,setEditSaleCustomer]=useState('');
+  const [editSaleCustomCustomerName,setEditSaleCustomCustomerName]=useState('');
   const [editSaleMethod,setEditSaleMethod]=useState('Nakit');
   const [editSaleDiscountPct,setEditSaleDiscountPct]=useState('');
   const [editSaleDiscountAmt,setEditSaleDiscountAmt]=useState('');
@@ -1213,8 +1226,10 @@ export default function App(){
   // ── Sale ──────────────────────────────────────────────────────────────
   const finishSale=async(method:string)=>{
     if(cart.length===0)return;
-    if(method==='Veresiye'&&!cartCustomer)return alert('Veresiye satış için Müşteri seçmelisiniz!');
+    if(method==='Veresiye'&&!cartCustomer)return alert('Veresiye satış için kayıtlı Cari Hesap seçmelisiniz!');
     const ac=customers.find((c:any)=>c.id===cartCustomer);
+    const manualName=cartCustomCustomerName.trim();
+    const resolvedCustomerName=ac?ac.name:(manualName||'Perakende Müşteri');
     const cleanCart=cart.map((i:any)=>({...i,qty:Math.max(1,Number(i.qty)||1),grossPrice:Math.max(0,Number(i.grossPrice)||0)}));
     const prevBal=ac?Number(ac.balance||0):0;
     const newBal=prevBal+(method==='Veresiye'?finalTotal:0);
@@ -1226,7 +1241,7 @@ export default function App(){
       totalCost:totalCostCart,
       total:finalTotal,
       method,
-      customerName:ac?ac.name:'Perakende Müşteri',
+      customerName:resolvedCustomerName,
       customerTax:ac?ac.taxNum:'-',
       customerPrevBalance:prevBal,
       customerBalanceAfter:newBal,
@@ -1237,22 +1252,24 @@ export default function App(){
     const ref=await addDoc(collection(db,'sales'),sd);
     if(method==='Veresiye'&&ac)await updateDoc(doc(db,'customers',ac.id),{balance:newBal});
     for(const item of cleanCart){const p=products.find(p=>p.id===item.id);if(p&&typeof p.stock==='number')await updateDoc(doc(db,'products',p.id),{stock:Math.max(0,(p.stock||0)-item.qty)});}
-    await logAction('SATIŞ',(ac?ac.name:'Perakende')+' - '+(method)+' - ₺'+(finalTotal.toFixed(2)),finalTotal);
-    setLastSale({id:ref.id,...sd});setCart([]);setCartCustomer('');setDiscountPct('');setDiscountAmtInput('');setIsVeresiyeOpen(false);
+    await logAction('SATIŞ',(ac?ac.name:(manualName||'Perakende'))+' - '+(method)+' - ₺'+(finalTotal.toFixed(2)),finalTotal);
+    setLastSale({id:ref.id,...sd});setCart([]);setCartCustomer('');setCartCustomCustomerName('');setDiscountPct('');setDiscountAmtInput('');setIsVeresiyeOpen(false);
   };
   const handleSplitSale=async()=>{
     const nakit=parseFloat(splitNakit)||0,kart=parseFloat(splitKart)||0;
     if(Math.abs(nakit+kart-finalTotal)>0.01)return alert('Nakit+Kart=₺'+((nakit+kart).toFixed(2))+' ≠ ₺'+(finalTotal.toFixed(2)));
     if(cart.length===0)return;
     const ac=customers.find((c:any)=>c.id===cartCustomer);
+    const manualName=cartCustomCustomerName.trim();
+    const resolvedCustomerName=ac?ac.name:(manualName||'Perakende Müşteri');
     const cleanCart=cart.map((i:any)=>({...i,qty:Math.max(1,Number(i.qty)||1),grossPrice:Math.max(0,Number(i.grossPrice)||0)}));
-    const base={items:cleanCart,subTotal:rawTotal,discountPct:discountVal,discountAmount,totalCost:totalCostCart,customerName:ac?ac.name:'Perakende Müşteri',customerTax:ac?ac.taxNum:'-',date:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name,isSplit:true};
+    const base={items:cleanCart,subTotal:rawTotal,discountPct:discountVal,discountAmount,totalCost:totalCostCart,customerName:resolvedCustomerName,customerTax:ac?ac.taxNum:'-',date:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name,isSplit:true};
     if(nakit>0)await addDoc(collection(db,'sales'),{...base,total:nakit,method:'Nakit'});
     if(kart>0)await addDoc(collection(db,'sales'),{...base,total:kart,method:'Kart'});
     for(const item of cleanCart){const p=products.find(p=>p.id===item.id);if(p&&typeof p.stock==='number')await updateDoc(doc(db,'products',p.id),{stock:Math.max(0,(p.stock||0)-item.qty)});}
     await logAction('BÖLÜNMÜŞ_SATIŞ','Nakit:₺'+(nakit)+'+Kart:₺'+(kart),finalTotal);
-    setLastSale({id:'SPLIT-'+(Date.now()),items:cleanCart,total:finalTotal,method:'Nakit ₺'+(nakit)+' + Kart ₺'+(kart),customerName:ac?ac.name:'Perakende Müşteri',date:new Date().toLocaleString('tr-TR'),staffName:currentStaff?.name});
-    setCart([]);setCartCustomer('');setDiscountPct('');setDiscountAmtInput('');setSplitModal(false);setSplitNakit('');setSplitKart('');
+    setLastSale({id:'SPLIT-'+(Date.now()),items:cleanCart,total:finalTotal,method:'Nakit ₺'+(nakit)+' + Kart ₺'+(kart),customerName:resolvedCustomerName,date:new Date().toLocaleString('tr-TR'),staffName:currentStaff?.name});
+    setCart([]);setCartCustomer('');setCartCustomCustomerName('');setDiscountPct('');setDiscountAmtInput('');setSplitModal(false);setSplitNakit('');setSplitKart('');
   };
 
   // ── Fiş Düzenleme & Silme & Yeniden Yazdırma ──────────────────────────
@@ -1280,6 +1297,7 @@ export default function App(){
     setEditSaleCart((sale.items||[]).map((i:any)=>({...i})));
     const matchedCust=customers.find(c=>c.name===sale.customerName);
     setEditSaleCustomer(matchedCust?matchedCust.id:'');
+    setEditSaleCustomCustomerName(!matchedCust&&sale.customerName&&sale.customerName!=='Perakende Müşteri'?sale.customerName:'');
     setEditSaleMethod(sale.method||'Nakit');
     setEditSaleDiscountPct(sale.discountPct?String(sale.discountPct):'');
     setEditSaleDiscountAmt(sale.discountAmount?String(sale.discountAmount):'');
@@ -1352,8 +1370,9 @@ export default function App(){
       }
     }
 
-    const updatedCustomerName=newCust?newCust.name:(editSaleCustomer===''?'Perakende Müşteri':(editingSale.customerName||'Perakende Müşteri'));
-    const updatedCustomerTax=newCust?(newCust.taxNum||'-'):(editSaleCustomer===''?'-':(editingSale.customerTax||'-'));
+    const manualEditName=editSaleCustomCustomerName.trim();
+    const updatedCustomerName=newCust?newCust.name:(manualEditName||'Perakende Müşteri');
+    const updatedCustomerTax=newCust?(newCust.taxNum||'-'):'-';
 
     const patch={
       items:cleanItems,
@@ -1499,16 +1518,138 @@ export default function App(){
     if(!returnSale)return;
     const lines=returnLines.filter(l=>l.qty>0);
     if(lines.length===0)return alert('En az bir ürün seçin.');
-    const returnItems=lines.map(l=>({...returnSale.items[l.itemIdx],qty:l.qty,reason:l.reason}));
-    const returnTotal=returnItems.reduce((a:number,b:any)=>a+(b.grossPrice||0)*b.qty,0);
-    await addDoc(collection(db,'returns'),{type:returnType,originalSaleId:returnSale.id,customerName:returnSale.customerName,items:returnItems,total:returnTotal,exchangeItems:returnType==='degisim'?exchangeCart:[],note:returnNote,date:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name});
-    for(const item of returnItems){const p=products.find(p=>p.name===item.name);if(p)await updateDoc(doc(db,'products',p.id),{stock:(p.stock||0)+item.qty});}
-    if(returnSale.customerName&&returnSale.customerName!=='Perakende Müşteri'&&returnType==='iade'){
-      const cust=customers.find(c=>c.name===returnSale.customerName);
-      if(cust)await updateDoc(doc(db,'customers',cust.id),{balance:(cust.balance||0)-returnTotal});
+
+    const returnMap:Record<number,{qty:number;reason:string}>={};
+    lines.forEach(l=>{
+      const orig=returnSale.items?.[l.itemIdx];
+      if(!orig)return;
+      const clampedQty=Math.min(Number(orig.qty)||0,Math.max(0,Number(l.qty)||0));
+      if(clampedQty>0)returnMap[l.itemIdx]={qty:clampedQty,reason:l.reason||''};
+    });
+
+    const returnItems=Object.entries(returnMap).map(([idxStr,info])=>({
+      ...returnSale.items[Number(idxStr)],
+      qty:info.qty,
+      reason:info.reason
+    }));
+    if(returnItems.length===0)return alert('Geçerli bir iade adedi girin.');
+
+    const returnTotal=returnItems.reduce((a:number,b:any)=>a+(Number(b.grossPrice)||0)*b.qty,0);
+    const exchangeTotal=returnType==='degisim'
+      ?exchangeCart.reduce((a:number,b:any)=>a+(Number(b.grossPrice)||0)*(Number(b.qty)||1),0)
+      :0;
+    const nowStr=new Date().toLocaleString('tr-TR');
+
+    // 1. Orijinal fiş kalemlerinden iade edilen adetleri düş (Değişim ise yeni ürünleri ekle)
+    const updatedSaleItems:any[]=[];
+    (returnSale.items||[]).forEach((origItem:any,idx:number)=>{
+      const retInfo=returnMap[idx];
+      const remQty=(Number(origItem.qty)||0)-(retInfo?retInfo.qty:0);
+      if(remQty>0){
+        updatedSaleItems.push({...origItem,qty:remQty});
+      }
+    });
+    if(returnType==='degisim'&&exchangeCart.length>0){
+      exchangeCart.forEach((exIt:any)=>{
+        const exQty=Math.max(1,Number(exIt.qty)||1);
+        const existingIdx=updatedSaleItems.findIndex((it:any)=>it.id===exIt.id&&Number(it.grossPrice)===Number(exIt.grossPrice));
+        if(existingIdx>=0){
+          updatedSaleItems[existingIdx]={...updatedSaleItems[existingIdx],qty:(Number(updatedSaleItems[existingIdx].qty)||0)+exQty};
+        }else{
+          updatedSaleItems.push({...exIt,qty:exQty,grossPrice:Math.max(0,Number(exIt.grossPrice)||0)});
+        }
+      });
     }
-    await logAction('İADE','#'+(returnSale.id.slice(-5))+' - ₺'+(returnTotal.toFixed(2)),returnTotal);
-    alert((returnType==='iade'?'İade':'Değişim')+' tamamlandı!');
+
+    // 2. Orijinal fişin ara toplam, iskonto, maliyet ve genel toplamını yeniden hesapla
+    const newSubTotal=updatedSaleItems.reduce((sum:number,it:any)=>sum+((Number(it.grossPrice)||0)*(Number(it.qty)||1)),0);
+    const oldSubTotal=Number(returnSale.subTotal)||Number(returnSale.total)||0;
+    const oldDiscountAmt=Number(returnSale.discountAmount)||0;
+    const newDiscountAmount=(oldSubTotal>0&&oldDiscountAmt>0&&newSubTotal>0)
+      ?parseFloat((newSubTotal*(oldDiscountAmt/oldSubTotal)).toFixed(2))
+      :0;
+    const newTotal=Math.max(0,parseFloat((newSubTotal-newDiscountAmount).toFixed(2)));
+    const newTotalCost=updatedSaleItems.reduce((sum:number,it:any)=>{
+      const p=products.find(pr=>pr.id===it.id||pr.name===it.name);
+      return sum+((Number(it.costPrice??p?.costPrice??0))*(Number(it.qty)||1));
+    },0);
+    const oldSaleTotal=Number(returnSale.total)||0;
+    const receiptDelta=newTotal-oldSaleTotal;
+
+    const prevReturned=Array.isArray(returnSale.returnedItems)?returnSale.returnedItems:[];
+    const newReturnedEntries=returnItems.map((it:any)=>({
+      name:it.name,
+      qty:it.qty,
+      grossPrice:Number(it.grossPrice)||0,
+      reason:it.reason||'',
+      date:nowStr,
+      type:returnType
+    }));
+
+    // 3. İade kaydını 'returns' koleksiyonuna ekle
+    await addDoc(collection(db,'returns'),{
+      type:returnType,
+      originalSaleId:returnSale.id,
+      customerName:returnSale.customerName,
+      items:returnItems,
+      total:returnTotal,
+      exchangeItems:returnType==='degisim'?exchangeCart:[],
+      exchangeTotal,
+      netReceiptTotal:newTotal,
+      note:returnNote,
+      date:nowStr,
+      staffId:currentStaff?.id,
+      staffName:currentStaff?.name
+    });
+
+    // 4. Ürün stoklarını güncelle (İade alınanları stoğa ekle, değişim verilenleri stoktan düş)
+    for(const item of returnItems){
+      const p=products.find(pr=>pr.id===item.id||pr.name===item.name);
+      if(p&&typeof p.stock==='number')await updateDoc(doc(db,'products',p.id),{stock:(p.stock||0)+item.qty});
+    }
+    if(returnType==='degisim'){
+      for(const exItem of exchangeCart){
+        const p=products.find(pr=>pr.id===exItem.id||pr.name===exItem.name);
+        if(p&&typeof p.stock==='number')await updateDoc(doc(db,'products',p.id),{stock:Math.max(0,(p.stock||0)-(Number(exItem.qty)||1))});
+      }
+    }
+
+    // 5. Cari müşteri bakiyesini güncelle
+    if(returnSale.customerName&&returnSale.customerName!=='Perakende Müşteri'){
+      const cust=customers.find(c=>c.name===returnSale.customerName);
+      if(cust){
+        if(returnType==='iade'){
+          const creditBack=oldDiscountAmt>0?Math.abs(receiptDelta):returnTotal;
+          await updateDoc(doc(db,'customers',cust.id),{balance:(cust.balance||0)-creditBack});
+        }else if(returnType==='degisim'&&returnSale.method==='Veresiye'&&Math.abs(receiptDelta)>0.001){
+          await updateDoc(doc(db,'customers',cust.id),{balance:(cust.balance||0)+receiptDelta});
+        }
+      }
+    }
+
+    // 6. Orijinal satış fişini ('sales' dokümanı) güncelle — iade fişten düşülür!
+    const salePatch:any={
+      items:updatedSaleItems,
+      subTotal:newSubTotal,
+      discountAmount:newDiscountAmount,
+      totalCost:newTotalCost,
+      total:newTotal,
+      returnedItems:[...prevReturned,...newReturnedEntries],
+      returnedTotal:parseFloat(((Number(returnSale.returnedTotal)||0)+returnTotal).toFixed(2)),
+      hasReturns:true,
+      updatedAt:nowStr
+    };
+    if(returnSale.customerBalanceAfter!==undefined){
+      salePatch.customerBalanceAfter=Number(returnSale.customerBalanceAfter)+receiptDelta;
+    }
+    await updateDoc(doc(db,'sales',returnSale.id),salePatch);
+
+    await logAction(
+      returnType==='iade'?'İADE':'DEĞİŞİM',
+      '#'+(returnSale.id.slice(-6).toUpperCase())+' - İade: ₺'+(returnTotal.toFixed(2))+' → Yeni Fiş Tutarı: ₺'+(newTotal.toFixed(2)),
+      returnTotal
+    );
+    alert((returnType==='iade'?'İade':'Değişim')+' tamamlandı ve orijinal fişten düşüldü! (Yeni fiş tutarı: ₺'+newTotal.toFixed(2)+')');
     setReturnSale(null);setReturnSaleId('');setReturnLines([]);setExchangeCart([]);setReturnNote('');
   };
 
@@ -2323,7 +2464,29 @@ export default function App(){
               <div className="p-4 border-b border-zinc-800">
                 <div className="flex items-center gap-2 mb-3 font-black text-base"><ShoppingCart className="text-emerald-500" size={17}/>{orderMode?'📦 YENİ SİPARİŞ':'SATIŞ FİŞİ'}</div>
                 {!orderMode?(
-                  <select value={cartCustomer} onChange={e=>setCartCustomer(e.target.value)} className="w-full bg-zinc-950 border border-zinc-700 p-2.5 rounded-xl text-white outline-none text-sm font-bold"><option value="">-- Perakende --</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
+                  <div className="space-y-2">
+                    <select
+                      value={cartCustomer}
+                      onChange={e=>{
+                        setCartCustomer(e.target.value);
+                        if(e.target.value)setCartCustomCustomerName('');
+                      }}
+                      className="w-full bg-zinc-950 border border-zinc-700 p-2.5 rounded-xl text-white outline-none focus:border-emerald-500 text-xs sm:text-sm font-bold"
+                    >
+                      <option value="">-- Perakende / Kayıtlı Cari Seç --</option>
+                      {customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                    <input
+                      type="text"
+                      value={cartCustomCustomerName}
+                      onChange={e=>{
+                        setCartCustomCustomerName(e.target.value);
+                        if(e.target.value.trim())setCartCustomer('');
+                      }}
+                      placeholder="Veya fişe manuel müşteri adı yazın..."
+                      className="w-full bg-zinc-950 border border-emerald-500/35 p-2.5 rounded-xl text-white outline-none focus:border-emerald-500 text-xs sm:text-sm font-bold"
+                    />
+                  </div>
                 ):(
                   <div className="space-y-2">
                     <select
@@ -2382,7 +2545,7 @@ export default function App(){
                         <button
                           type="button"
                           onClick={()=>{
-                            const activeCustName=customers.find((c:any)=>c.id===(orderMode?orderCustomer:cartCustomer))?.name||(orderMode&&orderCustomCustomerName.trim()?orderCustomCustomerName.trim():'all');
+                            const activeCustName=customers.find((c:any)=>c.id===(orderMode?orderCustomer:cartCustomer))?.name||(orderMode&&orderCustomCustomerName.trim()?orderCustomCustomerName.trim():(!orderMode&&cartCustomCustomerName.trim()?cartCustomCustomerName.trim():'all'));
                             setQuickPriceCustomerFilter(activeCustName);
                             setQuickPriceModalItem({target:'pos',item});
                           }}
@@ -3025,6 +3188,7 @@ export default function App(){
                             <span className="font-black text-white text-base">{sale.customerName||'Perakende Müşteri'}</span>
                             <span className={'text-xs font-bold px-2.5 py-0.5 rounded-full '+(sale.method==='Nakit'?'bg-emerald-500/20 text-emerald-400':sale.method==='Kart'?'bg-blue-500/20 text-blue-400':sale.method==='Veresiye'?'bg-orange-500/20 text-orange-400':'bg-purple-500/20 text-purple-400')}>{sale.method||'Satış'}</span>
                             {(sale.discountAmount||0)>0&&<span className="text-[11px] bg-red-500/15 text-red-400 px-2 py-0.5 rounded-full font-bold">İskonto: -₺{(sale.discountAmount||0).toFixed(2)}</span>}
+                            {(sale.hasReturns||(sale.returnedItems||[]).length>0)&&<span className="text-[11px] bg-rose-500/20 text-rose-400 border border-rose-500/30 px-2.5 py-0.5 rounded-full font-black">🔄 İade Düşüldü (-₺{(Number(sale.returnedTotal)||0).toFixed(2)})</span>}
                             {sale.updatedAt&&<span className="text-[10px] bg-yellow-500/15 text-yellow-400 px-2 py-0.5 rounded-full font-bold">Düzenlendi ({sale.updatedAt})</span>}
                           </div>
                           <div className="text-zinc-500 text-xs mt-1 flex items-center gap-3 flex-wrap">
@@ -3060,6 +3224,7 @@ export default function App(){
                                 setCart((sale.items||[]).map((it:any)=>({...it})));
                                 const matched=customers.find(c=>c.name===sale.customerName);
                                 setCartCustomer(matched?matched.id:'');
+                                setCartCustomCustomerName(!matched&&sale.customerName&&sale.customerName!=='Perakende Müşteri'?sale.customerName:'');
                                 setDiscountPct(sale.discountPct?String(sale.discountPct):'');
                                 setDiscountAmtInput(sale.discountAmount?String(sale.discountAmount):'');
                                 setActivePage('pos');
@@ -3079,11 +3244,16 @@ export default function App(){
                           </button>
                         </div>
                       </div>
-                      {(sale.items||[]).length>0&&(
+                      {((sale.items||[]).length>0||(sale.returnedItems||[]).length>0)&&(
                         <div className="border-t border-zinc-800/60 bg-zinc-950/40 px-4 py-2.5 flex flex-wrap gap-2">
                           {(sale.items||[]).map((item:any,i:number)=>(
                             <span key={i} className="text-xs bg-zinc-800/80 border border-zinc-700/60 text-zinc-300 px-2.5 py-1 rounded-xl font-medium">
                               {item.name} <strong className="text-white">×{item.qty}</strong> <span className="text-emerald-400 font-bold">₺{((Number(item.grossPrice)||0)*(Number(item.qty)||1)).toFixed(2)}</span>
+                            </span>
+                          ))}
+                          {(sale.returnedItems||[]).map((ri:any,riIdx:number)=>(
+                            <span key={'ret-'+riIdx} className="text-xs bg-rose-500/10 border border-rose-500/30 text-rose-300 px-2.5 py-1 rounded-xl font-bold line-through">
+                              İade: {ri.name} ×{ri.qty} (-₺{((Number(ri.grossPrice)||0)*(Number(ri.qty)||1)).toFixed(2)})
                             </span>
                           ))}
                         </div>
@@ -3396,9 +3566,36 @@ export default function App(){
                   <div className="flex gap-2 mb-5">
                     {([['iade','🔄 İade'],['degisim','🔁 Değişim']] as const).map(([t,l])=><button key={t} onClick={()=>setReturnType(t)} className={'flex-1 py-2.5 rounded-xl font-bold text-sm border transition-all '+(returnType===t?t==='iade'?'bg-red-500 text-white border-red-500':'bg-blue-500 text-white border-blue-500':'bg-zinc-800 text-zinc-400 border-zinc-700')}>{l}</button>)}
                   </div>
-                  <div className="flex gap-2 mb-4">
-                    <input value={returnSaleId} onChange={e=>setReturnSaleId(e.target.value)} placeholder="Fiş no (son 6 karakter)..." className="flex-1 bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-red-500 text-sm"/>
-                    <button onClick={lookupSale} className="bg-red-600 hover:bg-red-500 text-white px-5 rounded-xl font-bold text-sm flex items-center gap-2"><Search size={14}/> Bul</button>
+                  <div className="space-y-2.5 mb-4">
+                    <select
+                      value={returnSale?.id||''}
+                      onChange={e=>{
+                        const sid=e.target.value;
+                        if(!sid){setReturnSale(null);setReturnSaleId('');setReturnLines([]);return;}
+                        const found=sales.find(s=>s.id===sid);
+                        if(found){
+                          setReturnSaleId(found.id.slice(-6).toUpperCase());
+                          setReturnSale(found);
+                          setReturnLines((found.items||[]).map((_:any,i:number)=>({itemIdx:i,qty:0,reason:''})));
+                        }
+                      }}
+                      className="w-full bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-red-500 text-xs sm:text-sm font-bold"
+                    >
+                      <option value="">— Son Fişlerden Hızlı Seçin —</option>
+                      {[...sales]
+                        .filter(s=>s.method!=='Tahsilat'&&(s.items||[]).length>0)
+                        .sort((a,b)=>parseDT(b.date).getTime()-parseDT(a.date).getTime())
+                        .slice(0,40)
+                        .map(s=>(
+                          <option key={s.id} value={s.id}>
+                            #{s.id.slice(-6).toUpperCase()} · {s.customerName||'Perakende'} · {s.date} · ₺{(s.total||0).toFixed(2)}
+                          </option>
+                        ))}
+                    </select>
+                    <div className="flex gap-2">
+                      <input value={returnSaleId} onChange={e=>setReturnSaleId(e.target.value)} onKeyDown={e=>e.key==='Enter'&&lookupSale()} placeholder="Veya fiş no yazın (son 6 karakter)..." className="flex-1 bg-zinc-950 border border-zinc-700 text-white p-3 rounded-xl outline-none focus:border-red-500 text-sm"/>
+                      <button onClick={lookupSale} className="bg-red-600 hover:bg-red-500 text-white px-5 rounded-xl font-bold text-sm flex items-center gap-2"><Search size={14}/> Bul</button>
+                    </div>
                   </div>
                   {returnSale&&(
                     <div className="space-y-4">
@@ -3413,7 +3610,7 @@ export default function App(){
                         {(returnSale.items||[]).map((item:any,i:number)=>(
                           <div key={i} className="bg-zinc-950 border border-zinc-800 rounded-xl p-3 flex items-center gap-3">
                             <div className="flex-1 min-w-0"><p className="font-bold text-white text-sm truncate">{item.name}</p><p className="text-zinc-500 text-xs">₺{(item.grossPrice||0).toFixed(2)} × {item.qty}</p></div>
-                            <input type="number" min="0" max={item.qty} value={returnLines[i]?.qty||0} onChange={e=>{const nl=[...returnLines];nl[i]={...nl[i],qty:parseInt(e.target.value)||0};setReturnLines(nl);}} className="w-16 bg-zinc-900 border border-zinc-700 text-white rounded-xl p-2 text-center font-black text-sm outline-none focus:border-red-500"/>
+                            <input type="number" min="0" max={item.qty} value={returnLines[i]?.qty||0} onChange={e=>{const raw=parseInt(e.target.value)||0;const clamped=Math.min(Number(item.qty)||0,Math.max(0,raw));const nl=[...returnLines];nl[i]={...nl[i],qty:clamped};setReturnLines(nl);}} className="w-16 bg-zinc-900 border border-zinc-700 text-white rounded-xl p-2 text-center font-black text-sm outline-none focus:border-red-500"/>
                             <input value={returnLines[i]?.reason||''} onChange={e=>{const nl=[...returnLines];nl[i]={...nl[i],reason:e.target.value};setReturnLines(nl);}} placeholder="Neden?" className="w-28 bg-zinc-900 border border-zinc-700 text-white rounded-xl p-2 text-xs outline-none"/>
                           </div>
                         ))}
@@ -4863,12 +5060,29 @@ export default function App(){
               <div className="flex-1 overflow-y-auto p-6 space-y-4">
                 {/* Müşteri ve Ödeme Yöntemi */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-1">
+                  <div className="space-y-1.5">
                     <label className="text-xs font-bold text-zinc-500 uppercase">Müşteri / Cari</label>
-                    <select value={editSaleCustomer} onChange={e=>setEditSaleCustomer(e.target.value)} className="w-full bg-zinc-950 border border-zinc-700 text-white p-2.5 rounded-xl outline-none focus:border-emerald-500 text-sm font-bold">
-                      <option value="">-- Perakende Müşteri --</option>
+                    <select
+                      value={editSaleCustomer}
+                      onChange={e=>{
+                        setEditSaleCustomer(e.target.value);
+                        if(e.target.value)setEditSaleCustomCustomerName('');
+                      }}
+                      className="w-full bg-zinc-950 border border-zinc-700 text-white p-2.5 rounded-xl outline-none focus:border-emerald-500 text-sm font-bold"
+                    >
+                      <option value="">-- Perakende / Manuel İsim --</option>
                       {customers.map(c=><option key={c.id} value={c.id}>{c.name} (₺{(c.balance||0).toFixed(2)})</option>)}
                     </select>
+                    <input
+                      type="text"
+                      value={editSaleCustomCustomerName}
+                      onChange={e=>{
+                        setEditSaleCustomCustomerName(e.target.value);
+                        if(e.target.value.trim())setEditSaleCustomer('');
+                      }}
+                      placeholder="Veya manuel müşteri adı yazın..."
+                      className="w-full bg-zinc-950 border border-emerald-500/35 text-white p-2 rounded-xl outline-none focus:border-emerald-500 text-xs font-bold"
+                    />
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-zinc-500 uppercase">Ödeme Yöntemi</label>
