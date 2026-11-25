@@ -179,7 +179,7 @@ const ALL_PERMISSIONS = [
   {key:'reports.genel',group:'Rapor',label:'Genel Rapor',icon:'📈'},
   {key:'reports.gunSonu',group:'Rapor',label:'Gün Sonu Raporu',icon:'🌙'},
   {key:'reports.kdv',group:'Rapor',label:'KDV Raporu',icon:'🧾'},
-  {key:'reports.personel',group:'Rapor',label:'Personel Geçmişi',icon:'🔍'},
+  {key:'reports.personel',group:'Rapor',label:'Personel Hareketleri',icon:'🔍'},
   {key:'receipt',group:'Ayarlar',label:'Fiş Tasarımı',icon:'🖨️'},
   {key:'personel',group:'Ayarlar',label:'Personel Yönetimi',icon:'🔑'},
 ] as const;
@@ -452,6 +452,7 @@ export default function App(){
   // ── Nav ───────────────────────────────────────────────────────────────
   const [activePage,setActivePage]=useState('pos');
   const [stockOpen,setStockOpen]=useState(true);
+  const [personelOpen,setPersonelOpen]=useState(true);
   const [mobileMenuOpen,setMobileMenuOpen]=useState(false);
   const [mobilePosTab,setMobilePosTab]=useState<'products'|'cart'>('products');
   // ── POS ───────────────────────────────────────────────────────────────
@@ -644,7 +645,10 @@ export default function App(){
   const parasutReady=parasutFirmTrim.length>0;
   const parasutOpts=useMemo(()=>({firmName:parasutFirmTrim,depotName:parasutDepotTrim,invoicePrefix:'FTR'}),[parasutFirmTrim,parasutDepotTrim]);
   const [staffLogFilter,setStaffLogFilter]=useState('all');
-  const [staffLogDateFilter,setStaffLogDateFilter]=useState('');
+  const [staffLogCategoryFilter,setStaffLogCategoryFilter]=useState<'all'|'satis'|'iade'|'siparis'|'cari'|'stok'|'finans'|'sistem'>('all');
+  const [staffLogSearch,setStaffLogSearch]=useState('');
+  const [staffLogStartDate,setStaffLogStartDate]=useState('');
+  const [staffLogEndDate,setStaffLogEndDate]=useState('');
   // ── Staff ─────────────────────────────────────────────────────────────
   const [newStaffName,setNewStaffName]=useState('');
   const [newStaffPin,setNewStaffPin]=useState('');
@@ -1145,9 +1149,10 @@ export default function App(){
     'gönderildi':{label:'Gönderildi',color:'text-emerald-400',bg:'bg-emerald-500/20'},
     'iptal':{label:'İptal',color:'text-red-400',bg:'bg-red-500/20'},
   };
-  const logAction=async(action:string,detail:string,amount?:number)=>{
-    if(!currentStaff)return;
-    await addDoc(collection(db,'staffLogs'),{staffId:currentStaff.id,staffName:currentStaff.name,role:currentStaff.role,action,detail,amount:amount||0,date:new Date().toLocaleString('tr-TR'),ts:Date.now()});
+  const logAction=async(action:string,detail:string,amount?:number,staffOverride?:any)=>{
+    const actor=staffOverride||currentStaff;
+    if(!actor)return;
+    await addDoc(collection(db,'staffLogs'),{staffId:actor.id,staffName:actor.name,role:actor.role,action,detail,amount:amount||0,date:new Date().toLocaleString('tr-TR'),ts:Date.now()});
   };
 
   const handleParasutExport=async(arr:any[],fileName?:string)=>{
@@ -1289,8 +1294,13 @@ export default function App(){
   };
   const toggleOrderItemChecked=async(order:any,itemIdx:number)=>{
     if(!order?.id)return;
-    const updatedItems=(order.items||[]).map((it:any,idx:number)=>idx===itemIdx?{...it,checked:!it.checked}:it);
+    const targetItem=(order.items||[])[itemIdx];
+    const nextState=!targetItem?.checked;
+    const updatedItems=(order.items||[]).map((it:any,idx:number)=>idx===itemIdx?{...it,checked:nextState}:it);
     await updateDoc(doc(db,'orders',order.id),{items:updatedItems,updatedAt:new Date().toLocaleString('tr-TR')});
+    if(targetItem){
+      await logAction('SİPARİŞ_KONTROL','#'+(order.id.slice(-5).toUpperCase())+' - '+(targetItem.name)+' → '+(nextState?'Hazırlandı':'İşaret kaldırıldı'));
+    }
   };
   const openEditSale=(sale:any)=>{
     setEditingSale(sale);
@@ -1472,6 +1482,7 @@ export default function App(){
       deliveryDate:editOrderDeliveryDate||'',
       updatedAt:new Date().toLocaleString('tr-TR')
     });
+    await logAction('SİPARİŞ_DÜZENLE','#'+(editingOrder.id.slice(-5).toUpperCase())+' - '+resolvedName+' - ₺'+((rawT-dAmt).toFixed(2)),rawT-dAmt);
     setEditingOrder(null);setEditOrderCart([]);setEditOrderDiscount('');setEditOrderCustomerId('');setEditOrderCustomerName('');setEditOrderNote('');setEditOrderDeliveryDate('');
   };
 
@@ -1699,6 +1710,7 @@ export default function App(){
   const handleSaveCust=async(e:React.FormEvent)=>{
     e.preventDefault();if(!editingCustomer)return;
     await updateDoc(doc(db,'customers',editingCustomer.id),{name:editCustForm.name,phone:editCustForm.phone,taxNum:editCustForm.taxNum,category:editCustForm.category,note:editCustForm.note});
+    await logAction('MÜŞTERİ_DÜZENLE',(editCustForm.name)+' güncellendi');
     if(selectedCustomer?.id===editingCustomer.id)setSelectedCustomer((prev:any)=>({...prev,...editCustForm}));
     setEditingCustomer(null);
   };
@@ -1728,8 +1740,8 @@ export default function App(){
     await logAction('STOK_SAYIM','Fiziksel sayım tamamlandı');
     setCountSaved(true);setTimeout(()=>setCountSaved(false),2500);
   };
-  const handleAddCategory=async(e:React.FormEvent)=>{e.preventDefault();if(!newCatName.trim())return;await addDoc(collection(db,'categories'),{name:newCatName.trim(),color:newCatColor});setNewCatName('');};
-  const handleAddCustCategory=async(e:React.FormEvent)=>{e.preventDefault();if(!newCustCatName.trim())return;await addDoc(collection(db,'custCategories'),{name:newCustCatName.trim(),color:newCustCatColor});setNewCustCatName('');};
+  const handleAddCategory=async(e:React.FormEvent)=>{e.preventDefault();if(!newCatName.trim())return;const nm=newCatName.trim();await addDoc(collection(db,'categories'),{name:nm,color:newCatColor});await logAction('KATEGORİ_EKLE','Ürün kategorisi: '+nm);setNewCatName('');};
+  const handleAddCustCategory=async(e:React.FormEvent)=>{e.preventDefault();if(!newCustCatName.trim())return;const nm=newCustCatName.trim();await addDoc(collection(db,'custCategories'),{name:nm,color:newCustCatColor});await logAction('KATEGORİ_EKLE','Müşteri kategorisi: '+nm);setNewCustCatName('');};
   const toggleCategoryEditorProduct=(productId:string)=>{
     setCategoryEditorSelected(prev=>{
       const next=new Set(prev);
@@ -2193,6 +2205,7 @@ export default function App(){
     setReceiptSettings(next);
     saveSettingsLS(next);
     try{await setDoc(doc(db,'appConfig','receiptSettings'),next,{merge:true});}catch{}
+    await logAction('FİŞ_AYARLARI_KAYDET','Fiş tasarımı ve yazdırma ayarları güncellendi');
     setSettingsSaved(true);
     setTimeout(()=>setSettingsSaved(false),2000);
   };
@@ -2202,7 +2215,358 @@ export default function App(){
 
 
 
-  if(!currentStaff) return <LoginScreen onLogin={staff=>{setCurrentStaff(staff);logAction('GİRİŞ','Sisteme giriş yapıldı');}}/>;
+  // ── Personel Hareketleri Analiz & Filtreleme ──────────────────────────
+  const classifyStaffAction=(rawAction:string)=>{
+    const a=String(rawAction||'').toUpperCase();
+    if(a==='FİŞ_SİL')return{cat:'satis' as const,catLabel:'Satış & Fiş',badge:'bg-red-500/20 text-red-400 border border-red-500/30',isCritical:true};
+    if(a==='FİŞ_DÜZENLE')return{cat:'satis' as const,catLabel:'Satış & Fiş',badge:'bg-amber-500/20 text-amber-300 border border-amber-500/30',isCritical:true};
+    if(a.includes('SATIŞ'))return{cat:'satis' as const,catLabel:'Satış & Fiş',badge:'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30',isCritical:false};
+    if(a==='İADE'||a==='DEĞİŞİM')return{cat:'iade' as const,catLabel:'İade & Değişim',badge:'bg-rose-500/20 text-rose-400 border border-rose-500/30',isCritical:true};
+    if(a.startsWith('SİPARİŞ')||a.startsWith('TEKLİF'))return{cat:'siparis' as const,catLabel:'Sipariş & Teklif',badge:'bg-purple-500/20 text-purple-300 border border-purple-500/30',isCritical:a.includes('SİL')};
+    if(a.startsWith('MÜŞTERİ')||a.startsWith('MUSTERI')||a==='TAHSİLAT')return{cat:'cari' as const,catLabel:'Cari & Tahsilat',badge:'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30',isCritical:a.includes('SIL')||a.includes('SİL')};
+    if(a.startsWith('ÜRÜN')||a.startsWith('STOK')||a==='TOPLU_FİYAT'||a.startsWith('VARYANT')||a.startsWith('KATEGOR'))return{cat:'stok' as const,catLabel:'Stok & Ürün',badge:'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30',isCritical:a.includes('SİL')||a==='TOPLU_FİYAT'};
+    if(a.startsWith('ALIŞ')||a==='GİDER')return{cat:'finans' as const,catLabel:'Alış & Gider',badge:'bg-blue-500/20 text-blue-300 border border-blue-500/30',isCritical:a.includes('SİL')};
+    return{cat:'sistem' as const,catLabel:'Giriş / Sistem',badge:'bg-sky-500/20 text-sky-300 border border-sky-500/30',isCritical:a.includes('SİL')};
+  };
+
+  const baseDateAndSearchLogs=useMemo(()=>{
+    const q=staffLogSearch.trim().toLowerCase();
+    const startTs=staffLogStartDate?new Date(staffLogStartDate+'T00:00:00').getTime():null;
+    const endTs=staffLogEndDate?new Date(staffLogEndDate+'T23:59:59').getTime():null;
+    return [...staffLogs]
+      .sort((a,b)=>(Number(b.ts)||parseDT(b.date).getTime())-(Number(a.ts)||parseDT(a.date).getTime()))
+      .filter(l=>{
+        const logTs=Number(l.ts)||parseDT(l.date).getTime();
+        if(startTs!==null&&logTs<startTs)return false;
+        if(endTs!==null&&logTs>endTs)return false;
+        if(staffLogCategoryFilter!=='all'&&classifyStaffAction(l.action).cat!==staffLogCategoryFilter)return false;
+        if(q){
+          const hay=[String(l.staffName||''),String(l.action||''),String(l.detail||''),String(l.date||'')].join(' ').toLowerCase();
+          if(!hay.includes(q))return false;
+        }
+        return true;
+      });
+  },[staffLogs,staffLogSearch,staffLogStartDate,staffLogEndDate,staffLogCategoryFilter]);
+
+  const filteredStaffLogs=useMemo(()=>{
+    if(staffLogFilter==='all')return baseDateAndSearchLogs;
+    return baseDateAndSearchLogs.filter(l=>l.staffId===staffLogFilter);
+  },[baseDateAndSearchLogs,staffLogFilter]);
+
+  const staffMovementStats=useMemo(()=>{
+    let salesAndCollectionsTotal=0;
+    let salesAndCollectionsCount=0;
+    let returnsTotal=0;
+    let returnsCount=0;
+    let criticalCount=0;
+
+    filteredStaffLogs.forEach(l=>{
+      const act=String(l.action||'').toUpperCase();
+      const amt=Number(l.amount)||0;
+      const meta=classifyStaffAction(act);
+      if(act==='SATIŞ'||act==='BÖLÜNMÜŞ_SATIŞ'||act==='TAHSİLAT'){
+        salesAndCollectionsTotal+=amt;
+        salesAndCollectionsCount++;
+      }
+      if(act==='İADE'||act==='DEĞİŞİM'){
+        returnsTotal+=amt;
+        returnsCount++;
+      }
+      if(meta.isCritical)criticalCount++;
+    });
+
+    const summaryMap:Record<string,{staffId:string;staffName:string;role:string;count:number;salesTotal:number;criticalCount:number;lastDate:string}>={};
+    staffList.forEach(st=>{
+      summaryMap[st.id]={staffId:st.id,staffName:st.name,role:st.role||'ozel',count:0,salesTotal:0,criticalCount:0,lastDate:'—'};
+    });
+    baseDateAndSearchLogs.forEach(l=>{
+      const sid=l.staffId||l.staffName||'unknown';
+      if(!summaryMap[sid]){
+        summaryMap[sid]={staffId:sid,staffName:l.staffName||'Bilinmeyen',role:l.role||'ozel',count:0,salesTotal:0,criticalCount:0,lastDate:l.date||'—'};
+      }
+      const entry=summaryMap[sid];
+      entry.count++;
+      if(entry.lastDate==='—'&&l.date)entry.lastDate=l.date;
+      const act=String(l.action||'').toUpperCase();
+      if(act==='SATIŞ'||act==='BÖLÜNMÜŞ_SATIŞ'||act==='TAHSİLAT'){
+        entry.salesTotal+=(Number(l.amount)||0);
+      }
+      if(classifyStaffAction(act).isCritical)entry.criticalCount++;
+    });
+
+    return{
+      totalCount:filteredStaffLogs.length,
+      salesAndCollectionsTotal,
+      salesAndCollectionsCount,
+      returnsTotal,
+      returnsCount,
+      criticalCount,
+      perStaffSummary:Object.values(summaryMap).sort((a,b)=>b.count-a.count),
+    };
+  },[filteredStaffLogs,baseDateAndSearchLogs,staffList]);
+
+  const exportStaffLogsCSV=()=>{
+    const rows=filteredStaffLogs.map(l=>[
+      String(l.staffName||'').replace(/,/g,' '),
+      l.role==='admin'?'Admin':'Özel',
+      classifyStaffAction(l.action).catLabel,
+      String(l.action||'').replace(/,/g,' '),
+      String(l.detail||'').replace(/,/g,' '),
+      Number(l.amount||0).toFixed(2),
+      String(l.date||''),
+    ]);
+    dlCSV(rows,['Personel','Rol','Kategori','Islem','Detay','Tutar','Tarih'],'personel_hareketleri_'+(new Date().toISOString().slice(0,10))+'.csv');
+  };
+
+  const renderStaffMovementsContent=()=>(
+    <div className="space-y-6">
+      {/* 4 Özet KPI Kartı */}
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl">
+          <p className="text-zinc-500 text-xs font-bold uppercase mb-1">Toplam Hareket</p>
+          <p className="text-3xl font-black text-white">{staffMovementStats.totalCount}</p>
+          <p className="text-zinc-500 text-xs mt-1">{staffList.length} kayıtlı personel</p>
+        </div>
+        <div className="bg-emerald-500/10 border border-emerald-500/30 p-5 rounded-2xl">
+          <p className="text-emerald-400 text-xs font-bold uppercase mb-1">Satış & Tahsilat Hacmi</p>
+          <p className="text-2xl sm:text-3xl font-black text-emerald-400">₺{staffMovementStats.salesAndCollectionsTotal.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p>
+          <p className="text-emerald-500/80 text-xs mt-1">{staffMovementStats.salesAndCollectionsCount} satış/tahsilat işlemi</p>
+        </div>
+        <div className="bg-rose-500/10 border border-rose-500/30 p-5 rounded-2xl">
+          <p className="text-rose-400 text-xs font-bold uppercase mb-1">İade & Değişim</p>
+          <p className="text-2xl sm:text-3xl font-black text-rose-400">₺{staffMovementStats.returnsTotal.toLocaleString('tr-TR',{minimumFractionDigits:2})}</p>
+          <p className="text-rose-500/80 text-xs mt-1">{staffMovementStats.returnsCount} iade/değişim işlemi</p>
+        </div>
+        <div className={'p-5 rounded-2xl border '+(staffMovementStats.criticalCount>0?'bg-amber-500/10 border-amber-500/30':'bg-zinc-900 border-zinc-800')}>
+          <p className={'text-xs font-bold uppercase mb-1 '+(staffMovementStats.criticalCount>0?'text-amber-400':'text-zinc-500')}>Kritik / Hassas İşlem</p>
+          <p className={'text-3xl font-black '+(staffMovementStats.criticalCount>0?'text-amber-400':'text-zinc-400')}>{staffMovementStats.criticalCount}</p>
+          <p className="text-zinc-500 text-xs mt-1">Fiş silme, düzenleme, iade, toplu fiyat</p>
+        </div>
+      </div>
+
+      {/* Personel Bazlı Özet Kartları (Tıklayarak Filtrele) */}
+      {staffMovementStats.perStaffSummary.length>0&&(
+        <div>
+          <div className="flex items-center justify-between mb-2.5">
+            <span className="text-xs font-black text-zinc-500 uppercase tracking-wider">Personel Bazlı Özet (Filtrelemek için karta tıklayın)</span>
+            {staffLogFilter!=='all'&&(
+              <button type="button" onClick={()=>setStaffLogFilter('all')} className="text-xs text-emerald-400 hover:underline font-bold">Tüm Personeli Göster</button>
+            )}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {staffMovementStats.perStaffSummary.map(st=>{
+              const active=staffLogFilter===st.staffId;
+              return(
+                <button
+                  key={st.staffId}
+                  type="button"
+                  onClick={()=>setStaffLogFilter(active?'all':st.staffId)}
+                  className={'text-left p-4 rounded-2xl border transition-all '+(active?'bg-emerald-500/15 border-emerald-500 shadow-lg shadow-emerald-500/10':'bg-zinc-900 border-zinc-800 hover:border-zinc-700')}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className={'w-8 h-8 rounded-xl flex items-center justify-center font-black text-sm shrink-0 '+(st.role==='admin'?'bg-yellow-500/20 text-yellow-400':'bg-emerald-500/20 text-emerald-400')}>
+                        {st.staffName.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-black text-white text-sm truncate">{st.staffName}</p>
+                        <p className="text-[10px] text-zinc-500">{st.role==='admin'?'🔑 Admin':'⚙️ Özel Yetki'}</p>
+                      </div>
+                    </div>
+                    <span className="bg-zinc-800 text-white font-black text-xs px-2.5 py-1 rounded-full shrink-0">{st.count} işlem</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs pt-2 border-t border-zinc-800/80">
+                    <span className="text-emerald-400 font-black">₺{st.salesTotal.toLocaleString('tr-TR',{minimumFractionDigits:2})}</span>
+                    {st.criticalCount>0&&<span className="text-amber-400 font-bold">{st.criticalCount} kritik</span>}
+                  </div>
+                  <p className="text-[10px] text-zinc-600 mt-1 truncate">Son: {st.lastDate}</p>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Gelişmiş Filtre & Arama Barı */}
+      <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-4 space-y-3">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="relative flex-1 min-w-[210px]">
+            <Search className="absolute left-3.5 top-3 text-zinc-500" size={15}/>
+            <input
+              type="text"
+              value={staffLogSearch}
+              onChange={e=>setStaffLogSearch(e.target.value)}
+              placeholder="Personel, fiş no (#...), müşteri, ürün veya detay ara..."
+              className="w-full bg-zinc-950 border border-zinc-700 text-white pl-10 pr-4 py-2.5 rounded-xl outline-none focus:border-emerald-500 text-sm"
+            />
+          </div>
+          <select
+            value={staffLogFilter}
+            onChange={e=>setStaffLogFilter(e.target.value)}
+            className="bg-zinc-950 border border-zinc-700 text-white px-3.5 py-2.5 rounded-xl text-sm font-bold outline-none focus:border-emerald-500"
+          >
+            <option value="all">👥 Tüm Personel</option>
+            {staffList.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          <div className="flex items-center gap-1.5">
+            <input
+              type="date"
+              value={staffLogStartDate}
+              onChange={e=>setStaffLogStartDate(e.target.value)}
+              className="bg-zinc-950 border border-zinc-700 text-white rounded-xl px-3 py-2 text-xs sm:text-sm outline-none focus:border-emerald-500"
+              title="Başlangıç Tarihi"
+            />
+            <span className="text-zinc-600">—</span>
+            <input
+              type="date"
+              value={staffLogEndDate}
+              onChange={e=>setStaffLogEndDate(e.target.value)}
+              className="bg-zinc-950 border border-zinc-700 text-white rounded-xl px-3 py-2 text-xs sm:text-sm outline-none focus:border-emerald-500"
+              title="Bitiş Tarihi"
+            />
+          </div>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              type="button"
+              onClick={()=>{
+                const today=new Date().toISOString().slice(0,10);
+                setStaffLogStartDate(today);
+                setStaffLogEndDate(today);
+              }}
+              className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-2 rounded-xl text-xs font-bold border border-zinc-700"
+            >
+              Bugün
+            </button>
+            <button
+              type="button"
+              onClick={()=>{
+                const now=new Date();
+                const weekAgo=new Date(now.getTime()-6*86400000);
+                setStaffLogStartDate(weekAgo.toISOString().slice(0,10));
+                setStaffLogEndDate(now.toISOString().slice(0,10));
+              }}
+              className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-2 rounded-xl text-xs font-bold border border-zinc-700"
+            >
+              Son 7 Gün
+            </button>
+            <button
+              type="button"
+              onClick={()=>{
+                const now=new Date();
+                const firstDay=new Date(now.getFullYear(),now.getMonth(),1);
+                setStaffLogStartDate(firstDay.toISOString().slice(0,10));
+                setStaffLogEndDate(now.toISOString().slice(0,10));
+              }}
+              className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-2 rounded-xl text-xs font-bold border border-zinc-700"
+            >
+              Bu Ay
+            </button>
+            {(staffLogFilter!=='all'||staffLogCategoryFilter!=='all'||staffLogSearch||staffLogStartDate||staffLogEndDate)&&(
+              <button
+                type="button"
+                onClick={()=>{
+                  setStaffLogFilter('all');
+                  setStaffLogCategoryFilter('all');
+                  setStaffLogSearch('');
+                  setStaffLogStartDate('');
+                  setStaffLogEndDate('');
+                }}
+                className="bg-red-500/15 hover:bg-red-500/25 text-red-400 px-3 py-2 rounded-xl text-xs font-bold border border-red-500/30 flex items-center gap-1"
+              >
+                <X size={12}/> Sıfırla
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Kategori Sekmeleri */}
+        <div className="flex flex-wrap gap-1.5 pt-1 border-t border-zinc-800/80">
+          {([
+            ['all','Tümü'],
+            ['satis','🛒 Satış & Fiş'],
+            ['iade','🔄 İade & Değişim'],
+            ['siparis','📦 Sipariş & Teklif'],
+            ['cari','👥 Cari & Tahsilat'],
+            ['stok','📋 Stok & Ürün'],
+            ['finans','💰 Alış & Gider'],
+            ['sistem','🔐 Giriş & Sistem'],
+          ] as const).map(([catKey,catLabel])=>(
+            <button
+              key={catKey}
+              type="button"
+              onClick={()=>setStaffLogCategoryFilter(catKey)}
+              className={'px-3 py-1.5 rounded-xl text-xs font-bold border transition-all '+(staffLogCategoryFilter===catKey?'bg-emerald-500 text-zinc-950 border-emerald-500':'bg-zinc-950 text-zinc-400 border-zinc-800 hover:border-zinc-700')}
+            >
+              {catLabel}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Personel Hareket Tablosu */}
+      <div className="bg-zinc-900 border border-zinc-800 rounded-3xl overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-zinc-950 text-zinc-500 text-xs font-bold uppercase tracking-widest">
+            <tr>
+              <th className="p-4 text-left">Personel</th>
+              <th className="p-4 text-left">Kategori</th>
+              <th className="p-4 text-left">İşlem</th>
+              <th className="p-4 text-left">Detay</th>
+              <th className="p-4 text-right">Tutar</th>
+              <th className="p-4 text-left">Tarih / Saat</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-800/50">
+            {filteredStaffLogs.slice(0,250).map((log,i)=>{
+              const meta=classifyStaffAction(log.action);
+              const actUp=String(log.action||'').toUpperCase();
+              const isNegativeAmt=actUp.includes('İADE')||actUp.includes('DEĞİŞİM')||actUp.includes('SİL')||actUp==='GİDER';
+              return(
+                <tr key={log.id||i} className={'hover:bg-zinc-800/35 transition-colors '+(meta.isCritical?'bg-amber-500/[0.02]':'')}>
+                  <td className="p-4 whitespace-nowrap">
+                    <div className="flex items-center gap-2.5">
+                      <div className={'w-8 h-8 rounded-xl flex items-center justify-center font-black text-xs shrink-0 '+(log.role==='admin'?'bg-yellow-500/20 text-yellow-400':'bg-emerald-500/20 text-emerald-400')}>
+                        {(log.staffName||'?').charAt(0).toUpperCase()}
+                      </div>
+                      <div>
+                        <div className="font-bold text-white text-sm">{log.staffName||'—'}</div>
+                        <div className="text-[10px] text-zinc-500">{log.role==='admin'?'🔑 Admin':'⚙️ Özel'}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="p-4 whitespace-nowrap">
+                    <span className="text-xs font-bold text-zinc-400 bg-zinc-950 border border-zinc-800 px-2.5 py-1 rounded-lg">{meta.catLabel}</span>
+                  </td>
+                  <td className="p-4 whitespace-nowrap">
+                    <span className={'text-xs font-black px-2.5 py-1 rounded-lg inline-flex items-center gap-1 '+(meta.badge)}>
+                      {meta.isCritical&&<span>⚠️</span>}
+                      {log.action}
+                    </span>
+                  </td>
+                  <td className="p-4 text-zinc-300 text-xs min-w-[220px]">{log.detail}</td>
+                  <td className="p-4 text-right whitespace-nowrap font-mono font-black">
+                    {Number(log.amount)>0?(
+                      <span className={isNegativeAmt?'text-rose-400':'text-emerald-400'}>
+                        {isNegativeAmt?'-':''}₺{Number(log.amount).toFixed(2)}
+                      </span>
+                    ):<span className="text-zinc-600">—</span>}
+                  </td>
+                  <td className="p-4 text-zinc-400 text-xs font-mono whitespace-nowrap">{log.date}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {filteredStaffLogs.length===0&&(
+          <div className="text-center text-zinc-500 py-14 font-bold">
+            Seçilen filtrelere uygun personel hareketi bulunamadı.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  if(!currentStaff) return <LoginScreen onLogin={staff=>{setCurrentStaff(staff);logAction('GİRİŞ','Sisteme giriş yapıldı',0,staff);}}/>;
 
   return (
     <>
@@ -2271,7 +2635,26 @@ export default function App(){
           <div className="border-t border-zinc-800/60 my-2"/>
           <button onClick={()=>{setActivePage('dashboard');setMobileMenuOpen(false);}} className={'w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium '+(activePage==='dashboard'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white')}><BarChart3 size={15}/><span>Dashboard</span></button>
           {(canDo('reports.genel')||canDo('reports.gunSonu')||canDo('reports.kdv')||currentStaff?.role==='admin')&&<button onClick={()=>{setActivePage('reports');setMobileMenuOpen(false);}} className={'w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium '+(activePage==='reports'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white')}><BarChart3 size={15}/><span>Rapor & Analiz</span></button>}
-          {currentStaff.role==='admin'&&<button onClick={()=>{setActivePage('personel');setMobileMenuOpen(false);}} className={'w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium '+(activePage==='personel'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white')}><UserCog size={15}/><span>Personel</span></button>}
+          {(currentStaff.role==='admin'||canDo('reports.personel'))&&(
+            <div className="mt-1">
+              <button onClick={()=>setPersonelOpen(!personelOpen)} className={'w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium '+(activePage.startsWith('personel')?'text-white':'text-zinc-400 hover:bg-zinc-800 hover:text-white')}>
+                <UserCog size={15} className={activePage.startsWith('personel')?'text-emerald-400':''}/><span className="flex-1 text-left">Personel</span>
+                <ChevronDown size={12} className={'text-zinc-500 transition-transform '+(personelOpen?'':'rotate-[-90deg]')}/>
+              </button>
+              {personelOpen&&(
+                <div className="ml-3 mt-0.5 space-y-0.5 border-l border-zinc-800 pl-3">
+                  {currentStaff.role==='admin'&&(
+                    <button onClick={()=>{setActivePage('personel');setMobileMenuOpen(false);}} className={'w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm '+(activePage==='personel'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-500 hover:bg-zinc-800 hover:text-white')}>
+                      <Users size={13}/><span>Personel Yönetimi</span>
+                    </button>
+                  )}
+                  <button onClick={()=>{setActivePage('personel.movements');setMobileMenuOpen(false);}} className={'w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm '+(activePage==='personel.movements'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-500 hover:bg-zinc-800 hover:text-white')}>
+                    <Activity size={13}/><span>Personel Hareketleri</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           {(canDo('receipt')||currentStaff?.role==='admin')&&<button onClick={()=>{setActivePage('settings');setMobileMenuOpen(false);}} className={'w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium '+(activePage==='settings'||activePage==='receipt'?'bg-emerald-500 text-zinc-950 font-bold':'text-zinc-400 hover:bg-zinc-800 hover:text-white')}><Settings size={15}/><span>Ayarlar</span></button>}
         </nav>
       </aside>
@@ -3328,7 +3711,7 @@ export default function App(){
                         </>}
                         {order.status==='hazirlaniyor'&&<button onClick={()=>handleOrderStatus(order.id,'gönderildi')} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1"><SendHorizonal size={11}/> Gönderildi</button>}
                         {(order.status==='bekliyor'||order.status==='hazirlaniyor')&&<button onClick={()=>handleOrderStatus(order.id,'iptal')} className="bg-zinc-800 hover:bg-red-600 text-zinc-400 hover:text-white px-3 py-1.5 rounded-lg text-xs font-bold border border-zinc-700 flex items-center gap-1"><Ban size={11}/> İptal</button>}
-                        <button onClick={()=>{const msg=order.status==='gönderildi'?'Sipariş silinsin mi? (Satış kaydı ayrı kalır)':'Sipariş kalıcı olarak silinsin mi?';if(window.confirm(msg))deleteDoc(doc(db,'orders',order.id));}} className="bg-zinc-800 hover:bg-red-600 text-zinc-400 hover:text-white px-3 py-1.5 rounded-lg text-xs font-bold border border-zinc-700 flex items-center gap-1"><Trash2 size={11}/> Sil</button>
+                        <button onClick={async()=>{const msg=order.status==='gönderildi'?'Sipariş silinsin mi? (Satış kaydı ayrı kalır)':'Sipariş kalıcı olarak silinsin mi?';if(window.confirm(msg)){await deleteDoc(doc(db,'orders',order.id));await logAction('SİPARİŞ_SİL','#'+(order.id.slice(-5).toUpperCase())+' - '+(order.customerName||''),order.total||0);}}} className="bg-zinc-800 hover:bg-red-600 text-zinc-400 hover:text-white px-3 py-1.5 rounded-lg text-xs font-bold border border-zinc-700 flex items-center gap-1"><Trash2 size={11}/> Sil</button>
                         {order.status==='gönderildi'&&<span className="text-emerald-500 text-xs font-bold flex items-center gap-1"><CheckCircle size={12}/> Satışa Dönüştürüldü</span>}
                       </div>
                     </div>
@@ -3537,7 +3920,7 @@ export default function App(){
                       <div className="flex flex-col gap-2 shrink-0">
                         {q.status==='beklemede'&&!q.convertedToSale&&<>
                           <button onClick={()=>handleQuoteToSale(q)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5"><CheckCircle2 size={12}/> Satışa Çevir</button>
-                          <button onClick={()=>updateDoc(doc(db,'quotes',q.id),{status:'reddedildi'})} className="bg-zinc-800 hover:bg-red-600 text-zinc-400 hover:text-white px-3 py-2 rounded-xl text-xs font-bold border border-zinc-700 flex items-center gap-1.5"><X size={11}/> Reddet</button>
+                          <button onClick={async()=>{await updateDoc(doc(db,'quotes',q.id),{status:'reddedildi'});await logAction('TEKLİF_REDDET','#'+(q.id.slice(-5).toUpperCase())+' - '+(q.customerName||'Müşterisiz'),q.total||0);}} className="bg-zinc-800 hover:bg-red-600 text-zinc-400 hover:text-white px-3 py-2 rounded-xl text-xs font-bold border border-zinc-700 flex items-center gap-1.5"><X size={11}/> Reddet</button>
                         </>}
                         <button onClick={()=>{setPrintSale(null);setMergedPrint(null);setPrintQuote({...q});setTimeout(()=>window.print(),100);}} className="bg-zinc-800 hover:bg-white hover:text-zinc-950 text-zinc-400 px-3 py-2 rounded-xl text-xs font-bold border border-zinc-700 flex items-center gap-1.5"><Printer size={11}/> Yazdır</button>
                       </div>
@@ -3805,7 +4188,7 @@ export default function App(){
                                 <button onClick={()=>openEditProduct(p)} className="text-zinc-600 hover:text-emerald-400 p-1.5 rounded-lg hover:bg-zinc-800" title="Düzenle"><Pencil size={13}/></button>
                                 <button onClick={()=>setVariantProduct(p)} className="text-zinc-600 hover:text-purple-400 p-1.5 rounded-lg hover:bg-zinc-800" title="Varyantlar"><Boxes size={13}/></button>
                                 <button onClick={async()=>{setPriceHistoryProduct(p);await loadPriceHistory(p.id);}} className="text-zinc-600 hover:text-yellow-400 p-1.5 rounded-lg hover:bg-zinc-800" title="Fiyat Geçmişi"><TrendingUp size={13}/></button>
-                                <button onClick={()=>deleteDoc(doc(db,'products',p.id))} className="text-zinc-600 hover:text-red-500 p-1.5 rounded-lg hover:bg-zinc-800" title="Sil"><Trash2 size={13}/></button>
+                                <button onClick={async()=>{if(!window.confirm((p.name||'Ürün')+' silinsin mi?'))return;await deleteDoc(doc(db,'products',p.id));await logAction('ÜRÜN_SİL',(p.name||'Ürün')+' silindi');}} className="text-zinc-600 hover:text-red-500 p-1.5 rounded-lg hover:bg-zinc-800" title="Sil"><Trash2 size={13}/></button>
                               </div>
                             </td>
                           </tr>
@@ -3961,7 +4344,7 @@ export default function App(){
                             <div className="flex items-center gap-2">
                               <span className="text-xs font-bold px-3 py-1.5 rounded-full" style={{background:catBadgeBg,color:catBg}}>{cat.name}</span>
                               <button type="button" onClick={()=>setCategoryEditor(cat)} className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-2.5 py-1.5 rounded-lg border border-zinc-700 font-bold">Toplu Yonet</button>
-                              <button onClick={()=>deleteDoc(doc(db,'categories',cat.id))} className="text-zinc-700 hover:text-red-500 p-1"><Trash2 size={13}/></button>
+                              <button onClick={async()=>{await deleteDoc(doc(db,'categories',cat.id));await logAction('KATEGORİ_SİL','Ürün kategorisi silindi: '+(cat.name||''));}} className="text-zinc-700 hover:text-red-500 p-1"><Trash2 size={13}/></button>
                             </div>
                           </div>
                         );
@@ -4140,7 +4523,7 @@ export default function App(){
                     <div className="flex-1"><p className="font-black text-white text-sm">{pur.supplier||'Tedarikçi yok'}</p><p className="text-zinc-500 text-xs">{pur.date}{pur.note&&<span className="text-zinc-600"> · {pur.note}</span>}</p></div>
                     <div className="text-right mr-2"><p className="text-xl font-black text-blue-400">₺{(pur.totalCost||0).toFixed(2)}</p><p className="text-zinc-600 text-xs">{(pur.items||[]).length} kalem</p></div>
                     {expandedPurchase===pur.id?<ChevronDown size={15} className="text-zinc-500 rotate-180"/>:<ChevronDown size={15} className="text-zinc-500"/>}
-                    <button onClick={e=>{e.stopPropagation();deleteDoc(doc(db,'purchases',pur.id));}} className="text-zinc-700 hover:text-red-500 p-1"><Trash2 size={14}/></button>
+                    <button onClick={async e=>{e.stopPropagation();if(!window.confirm('Alış faturası kaydı silinsin mi?'))return;await deleteDoc(doc(db,'purchases',pur.id));await logAction('ALIŞ_SİL','#'+(pur.id.slice(-5).toUpperCase())+' - '+(pur.supplier||'Tedarikçi'),pur.totalCost||0);}} className="text-zinc-700 hover:text-red-500 p-1"><Trash2 size={14}/></button>
                   </div>
                   {expandedPurchase===pur.id&&(
                     <div className="border-t border-zinc-800 px-5 pb-4">
@@ -4245,8 +4628,8 @@ export default function App(){
               <button onClick={()=>handleParasutExport(sales.filter(s=>s.method!=='Tahsilat'),'parasut_tum_'+(new Date().toISOString().slice(0,10))+'.xlsx')} disabled={!parasutReady} className={'bg-blue-600 text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 text-sm shadow-lg shadow-blue-600/20 '+(parasutReady?'hover:bg-blue-500':'opacity-40 cursor-not-allowed')}><FileSpreadsheet size={16}/> Paraşüt'e Aktar</button>
             </div>
             <div className="flex flex-wrap gap-2 mb-6 bg-zinc-900 p-1.5 rounded-2xl border border-zinc-800 w-fit">
-              {([['genel','Genel'],['aylik','Aylık Analiz'],['gunSonu','Gün Sonu'],['kdv','KDV'],['parasut','Paraşüt'],['personel','Personel']] as const).map(([tab,label])=>(
-                (tab==='personel'&&currentStaff?.role!=='admin')?null:
+              {([['genel','Genel'],['aylik','Aylık Analiz'],['gunSonu','Gün Sonu'],['kdv','KDV'],['parasut','Paraşüt'],['personel','Personel Hareketleri']] as const).map(([tab,label])=>(
+                (tab==='personel'&&currentStaff?.role!=='admin'&&!canDo('reports.personel'))?null:
                 <button key={tab} onClick={()=>setReportTab(tab)} className={'px-4 py-2.5 rounded-xl font-bold text-sm transition-all '+(reportTab===tab?'bg-emerald-500 text-zinc-950':'text-zinc-500 hover:text-white')}>{label}</button>
               ))}
             </div>
@@ -4486,43 +4869,51 @@ export default function App(){
               </div>
             )}
 
-            {reportTab==='personel'&&currentStaff?.role==='admin'&&(
+            {reportTab==='personel'&&(currentStaff?.role==='admin'||canDo('reports.personel'))&&(
               <div>
-                <div className="flex items-center gap-3 mb-5 flex-wrap">
-                  <label className="text-zinc-400 font-bold text-sm">Personel:</label>
-                  <select value={staffLogFilter} onChange={e=>setStaffLogFilter(e.target.value)} className="bg-zinc-900 border border-zinc-700 text-white px-3 py-2.5 rounded-xl text-sm outline-none"><option value="all">Tüm Personel</option>{staffList.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select>
-                  <input type="date" value={staffLogDateFilter} onChange={e=>setStaffLogDateFilter(e.target.value)} className="bg-zinc-900 border border-zinc-700 text-white rounded-xl px-3 py-2.5 text-sm outline-none"/>
-                  {staffLogDateFilter&&<button onClick={()=>setStaffLogDateFilter('')} className="text-zinc-500 hover:text-red-400 text-xs font-bold bg-zinc-800 px-3 py-2.5 rounded-lg border border-zinc-700 flex items-center gap-1"><X size={11}/> Temizle</button>}
+                <div className="flex justify-end mb-4">
+                  <button type="button" onClick={exportStaffLogsCSV} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-4 py-2 rounded-xl font-bold text-xs border border-zinc-700 flex items-center gap-1.5">
+                    <Download size={14}/> Excel / CSV İndir
+                  </button>
                 </div>
-                <div className="bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden">
-                  <table className="w-full text-sm">
-                    <thead className="bg-zinc-950 text-zinc-500 text-xs font-bold uppercase tracking-widest">
-                      <tr><th className="p-4 text-left">Personel</th><th className="p-4 text-left">Rol</th><th className="p-4 text-left">İşlem</th><th className="p-4 text-left">Detay</th><th className="p-4 text-right">Tutar</th><th className="p-4 text-left">Tarih</th></tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-800/50">
-                      {staffLogs.filter(l=>staffLogFilter==='all'||l.staffId===staffLogFilter).filter(l=>{if(!staffLogDateFilter)return true;const d=new Date(staffLogDateFilter);const ld=parseDT(l.date);return ld.getFullYear()===d.getFullYear()&&ld.getMonth()===d.getMonth()&&ld.getDate()===d.getDate();}).slice().reverse().slice(0,100).map((log,i)=>(
-                        <tr key={i} className="hover:bg-zinc-800/30">
-                          <td className="p-4 font-bold text-white text-sm">{log.staffName}</td>
-                          <td className="p-4"><span className="text-xs bg-zinc-800 text-zinc-400 px-2 py-1 rounded-lg">{log.role==='admin'?'🔑 Admin':'⚙️ Özel'}</span></td>
-                          <td className="p-4"><span className={'text-xs font-bold px-2 py-1 rounded-lg '+(log.action.includes('SATIŞ')?'bg-emerald-500/20 text-emerald-400':log.action.includes('GİRİŞ')||log.action.includes('ÇIKIŞ')?'bg-blue-500/20 text-blue-400':log.action.includes('İADE')?'bg-red-500/20 text-red-400':'bg-zinc-700 text-zinc-400')}>{log.action}</span></td>
-                          <td className="p-4 text-zinc-400 text-xs max-w-xs truncate">{log.detail}</td>
-                          <td className="p-4 text-right font-bold text-zinc-300">{log.amount>0?'₺'+log.amount.toFixed(2):'-'}</td>
-                          <td className="p-4 text-zinc-500 text-xs font-mono">{log.date}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {staffLogs.length===0&&<div className="text-center text-zinc-600 py-8 font-bold">İşlem geçmişi yok.</div>}
-                </div>
+                {renderStaffMovementsContent()}
               </div>
             )}
+          </div>
+        )}
+
+        {/* ═══ PERSONEL HAREKETLERİ ═══════════════════════════════════════ */}
+        {activePage==='personel.movements'&&(currentStaff?.role==='admin'||canDo('reports.personel'))&&(
+          <div className="p-4 sm:p-7 w-full overflow-y-auto">
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+              <div>
+                <h2 className="text-3xl font-black flex items-center gap-3"><Activity className="text-emerald-500"/> Personel Hareketleri</h2>
+                <p className="text-zinc-500 text-sm mt-0.5">Personel giriş-çıkışları, satışlar, tahsilatlar, fiş düzenleme/silme, iade ve stok işlemlerinin tüm kayıtları</p>
+              </div>
+              <div className="flex items-center gap-2.5">
+                <button type="button" onClick={exportStaffLogsCSV} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm border border-zinc-700 flex items-center gap-2">
+                  <Download size={15}/> CSV İndir
+                </button>
+                {currentStaff?.role==='admin'&&(
+                  <button type="button" onClick={()=>setActivePage('personel')} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-4 py-2.5 rounded-xl font-black text-xs sm:text-sm flex items-center gap-2 shadow-lg shadow-emerald-500/20">
+                    <UserCog size={15}/> Personel Yönetimi
+                  </button>
+                )}
+              </div>
+            </div>
+            {renderStaffMovementsContent()}
           </div>
         )}
 
         {/* ═══ PERSONEL YÖNETİMİ ══════════════════════════════════════════ */}
         {activePage==='personel'&&currentStaff?.role==='admin'&&(
           <div className="p-4 sm:p-7 w-full overflow-y-auto">
-            <h2 className="text-3xl font-black flex items-center gap-3 mb-6"><UserCog className="text-emerald-500"/> Personel Yönetimi</h2>
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+              <h2 className="text-3xl font-black flex items-center gap-3"><UserCog className="text-emerald-500"/> Personel Yönetimi</h2>
+              <button type="button" onClick={()=>setActivePage('personel.movements')} className="bg-zinc-800 hover:bg-zinc-700 text-emerald-400 border border-emerald-500/30 px-4 py-2.5 rounded-xl font-black text-xs sm:text-sm flex items-center gap-2">
+                <Activity size={15}/> Personel Hareketlerini Gör ({staffLogs.length})
+              </button>
+            </div>
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
               <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl">
                 <h3 className="font-black text-lg mb-5 border-b border-zinc-800 pb-3 flex items-center gap-2"><Plus size={16} className="text-emerald-500"/> Yeni Personel</h3>
@@ -4574,7 +4965,7 @@ export default function App(){
                         </div>
                         <div className="flex items-center gap-2">
                           <button onClick={()=>{setEditingStaff(staff);setEditStaffPerms(staff.permissions||[]);setEditStaffPin('');}} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-400 px-3 py-2 rounded-xl text-xs font-bold border border-zinc-700 flex items-center gap-1.5"><Pencil size={12}/> Düzenle</button>
-                          {staff.id!==currentStaff.id&&<button onClick={()=>deleteDoc(doc(db,'staff',staff.id))} className="text-zinc-700 hover:text-red-500 p-2 rounded-xl hover:bg-zinc-800"><Trash2 size={13}/></button>}
+                          {staff.id!==currentStaff.id&&<button onClick={async()=>{if(!window.confirm(staff.name+' adlı personel silinsin mi?'))return;await deleteDoc(doc(db,'staff',staff.id));await logAction('PERSONEL_SİL',staff.name+' silindi');}} className="text-zinc-700 hover:text-red-500 p-2 rounded-xl hover:bg-zinc-800"><Trash2 size={13}/></button>}
                         </div>
                       </div>
                       {staff.role!=='admin'&&(staff.permissions||[]).length>0&&(
