@@ -543,12 +543,17 @@ export default function App(){
   // ── Order mode ────────────────────────────────────────────────────────
   const [orderMode,setOrderMode]=useState(false);
   const [orderCustomer,setOrderCustomer]=useState('');
+  const [orderCustomCustomerName,setOrderCustomCustomerName]=useState('');
   const [orderNote,setOrderNote]=useState('');
   const [orderDeliveryDate,setOrderDeliveryDate]=useState('');
   const [orderFilter,setOrderFilter]=useState('all');
   const [editingOrder,setEditingOrder]=useState<any>(null);
   const [editOrderCart,setEditOrderCart]=useState<any[]>([]);
   const [editOrderDiscount,setEditOrderDiscount]=useState('');
+  const [editOrderCustomerId,setEditOrderCustomerId]=useState('');
+  const [editOrderCustomerName,setEditOrderCustomerName]=useState('');
+  const [editOrderNote,setEditOrderNote]=useState('');
+  const [editOrderDeliveryDate,setEditOrderDeliveryDate]=useState('');
   // ── Quotes ────────────────────────────────────────────────────────────
   const [quoteDraft,setQuoteDraft]=useState<any[]>([]);
   const [quoteCustomer,setQuoteCustomer]=useState('');
@@ -1403,10 +1408,12 @@ export default function App(){
   const handleCreateOrder=async()=>{
     if(cart.length===0)return alert('Sepet boş!');
     const ac=customers.find((c:any)=>c.id===orderCustomer);
+    const manualName=orderCustomCustomerName.trim();
+    const resolvedName=ac?ac.name:(manualName||'Müşteri belirtilmemiş');
     const cleanCart=cart.map((i:any)=>({...i,qty:Math.max(1,Number(i.qty)||1),grossPrice:Math.max(0,Number(i.grossPrice)||0)}));
-    await addDoc(collection(db,'orders'),{items:cleanCart,subTotal:rawTotal,discountPct:discountVal,discountAmount,total:finalTotal,customerName:ac?ac.name:'Müşteri belirtilmemiş',customerTax:ac?ac.taxNum:'-',customerId:orderCustomer||'',note:orderNote,deliveryDate:orderDeliveryDate||'',status:'bekliyor',createdAt:new Date().toLocaleString('tr-TR'),updatedAt:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name});
-    await logAction('SİPARİŞ_OLUŞTUR',(ac?ac.name:'Müşterisiz')+' - ₺'+(finalTotal.toFixed(2)),finalTotal);
-    setCart([]);setCartCustomer('');setDiscountPct('');setDiscountAmtInput('');setOrderCustomer('');setOrderNote('');setOrderDeliveryDate('');setOrderMode(false);
+    await addDoc(collection(db,'orders'),{items:cleanCart,subTotal:rawTotal,discountPct:discountVal,discountAmount,total:finalTotal,customerName:resolvedName,customerTax:ac?ac.taxNum:'-',customerId:ac?ac.id:'',note:orderNote,deliveryDate:orderDeliveryDate||'',status:'bekliyor',createdAt:new Date().toLocaleString('tr-TR'),updatedAt:new Date().toLocaleString('tr-TR'),staffId:currentStaff?.id,staffName:currentStaff?.name});
+    await logAction('SİPARİŞ_OLUŞTUR',(ac?ac.name:(manualName||'Müşterisiz'))+' - ₺'+(finalTotal.toFixed(2)),finalTotal);
+    setCart([]);setCartCustomer('');setDiscountPct('');setDiscountAmtInput('');setOrderCustomer('');setOrderCustomCustomerName('');setOrderNote('');setOrderDeliveryDate('');setOrderMode(false);
     alert('Sipariş oluşturuldu!');
   };
   const handleOrderStatus=async(orderId:string,newStatus:string)=>{
@@ -1430,8 +1437,23 @@ export default function App(){
     e.preventDefault();if(!editingOrder)return;
     const rawT=editOrderCart.reduce((t:number,i:any)=>t+((i.grossPrice||0)*i.qty),0);
     const dv=parseFloat(editOrderDiscount)||0,dAmt=rawT*(dv/100);
-    await updateDoc(doc(db,'orders',editingOrder.id),{items:editOrderCart,subTotal:rawT,discountPct:dv,discountAmount:dAmt,total:rawT-dAmt,updatedAt:new Date().toLocaleString('tr-TR')});
-    setEditingOrder(null);setEditOrderCart([]);setEditOrderDiscount('');
+    const ac=customers.find((c:any)=>c.id===editOrderCustomerId);
+    const manualName=editOrderCustomerName.trim();
+    const resolvedName=ac?ac.name:(manualName||'Müşteri belirtilmemiş');
+    await updateDoc(doc(db,'orders',editingOrder.id),{
+      items:editOrderCart,
+      subTotal:rawT,
+      discountPct:dv,
+      discountAmount:dAmt,
+      total:rawT-dAmt,
+      customerId:ac?ac.id:'',
+      customerName:resolvedName,
+      customerTax:ac?(ac.taxNum||'-'):'-',
+      note:editOrderNote,
+      deliveryDate:editOrderDeliveryDate||'',
+      updatedAt:new Date().toLocaleString('tr-TR')
+    });
+    setEditingOrder(null);setEditOrderCart([]);setEditOrderDiscount('');setEditOrderCustomerId('');setEditOrderCustomerName('');setEditOrderNote('');setEditOrderDeliveryDate('');
   };
 
   // ── Quotes ────────────────────────────────────────────────────────────
@@ -2239,9 +2261,29 @@ export default function App(){
               </div>
               {orderMode&&(
                 <div className="bg-orange-500/10 border border-orange-500/30 rounded-2xl p-3 mb-3 flex flex-wrap items-center gap-2">
-                  <span className="text-orange-400 font-bold text-xs">🛍 Sipariş Modu</span>
-                  <select value={orderCustomer} onChange={e=>setOrderCustomer(e.target.value)} className="bg-zinc-900 border border-zinc-700 text-white px-2.5 py-1.5 rounded-xl text-xs sm:text-sm outline-none"><option value="">— Müşteri Seç —</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
-                  <input value={orderNote} onChange={e=>setOrderNote(e.target.value)} placeholder="Not..." className="bg-zinc-900 border border-zinc-700 text-white px-2.5 py-1.5 rounded-xl text-xs sm:text-sm outline-none flex-1 min-w-[110px]"/>
+                  <span className="text-orange-400 font-bold text-xs shrink-0">🛍 Sipariş Modu</span>
+                  <select
+                    value={orderCustomer}
+                    onChange={e=>{
+                      setOrderCustomer(e.target.value);
+                      if(e.target.value)setOrderCustomCustomerName('');
+                    }}
+                    className="bg-zinc-900 border border-zinc-700 text-white px-2.5 py-1.5 rounded-xl text-xs sm:text-sm outline-none focus:border-orange-400"
+                  >
+                    <option value="">— Kayıtlı Cari Seç —</option>
+                    {customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                  <input
+                    type="text"
+                    value={orderCustomCustomerName}
+                    onChange={e=>{
+                      setOrderCustomCustomerName(e.target.value);
+                      if(e.target.value.trim())setOrderCustomer('');
+                    }}
+                    placeholder="Veya müşteri adını manuel yazın..."
+                    className="bg-zinc-900 border border-zinc-700 text-white px-2.5 py-1.5 rounded-xl text-xs sm:text-sm outline-none focus:border-orange-400 flex-1 min-w-[160px]"
+                  />
+                  <input value={orderNote} onChange={e=>setOrderNote(e.target.value)} placeholder="Sipariş notu..." className="bg-zinc-900 border border-zinc-700 text-white px-2.5 py-1.5 rounded-xl text-xs sm:text-sm outline-none flex-1 min-w-[110px]"/>
                   <div className="flex items-center gap-1.5"><label className="text-zinc-500 text-xs font-bold">Teslim:</label><input type="date" value={orderDeliveryDate} onChange={e=>setOrderDeliveryDate(e.target.value)} className="bg-zinc-900 border border-zinc-700 text-white px-2.5 py-1.5 rounded-xl text-xs sm:text-sm outline-none"/></div>
                 </div>
               )}
@@ -2280,7 +2322,33 @@ export default function App(){
             <div className={'w-full lg:w-[400px] h-full bg-zinc-900 border-t lg:border-t-0 lg:border-l border-zinc-800 flex-col shadow-2xl overflow-hidden '+(mobilePosTab==='products'?'hidden lg:flex':'flex')}>
               <div className="p-4 border-b border-zinc-800">
                 <div className="flex items-center gap-2 mb-3 font-black text-base"><ShoppingCart className="text-emerald-500" size={17}/>{orderMode?'📦 YENİ SİPARİŞ':'SATIŞ FİŞİ'}</div>
-                {!orderMode&&<select value={cartCustomer} onChange={e=>setCartCustomer(e.target.value)} className="w-full bg-zinc-950 border border-zinc-700 p-2.5 rounded-xl text-white outline-none text-sm font-bold"><option value="">-- Perakende --</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>}
+                {!orderMode?(
+                  <select value={cartCustomer} onChange={e=>setCartCustomer(e.target.value)} className="w-full bg-zinc-950 border border-zinc-700 p-2.5 rounded-xl text-white outline-none text-sm font-bold"><option value="">-- Perakende --</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
+                ):(
+                  <div className="space-y-2">
+                    <select
+                      value={orderCustomer}
+                      onChange={e=>{
+                        setOrderCustomer(e.target.value);
+                        if(e.target.value)setOrderCustomCustomerName('');
+                      }}
+                      className="w-full bg-zinc-950 border border-zinc-700 p-2.5 rounded-xl text-white outline-none focus:border-orange-400 text-xs sm:text-sm font-bold"
+                    >
+                      <option value="">— Kayıtlı Cari Seç —</option>
+                      {customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                    <input
+                      type="text"
+                      value={orderCustomCustomerName}
+                      onChange={e=>{
+                        setOrderCustomCustomerName(e.target.value);
+                        if(e.target.value.trim())setOrderCustomer('');
+                      }}
+                      placeholder="Veya müşteri adını manuel yazın..."
+                      className="w-full bg-zinc-950 border border-orange-500/40 p-2.5 rounded-xl text-white outline-none focus:border-orange-400 text-xs sm:text-sm font-bold"
+                    />
+                  </div>
+                )}
               </div>
               <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
                 {cart.length===0&&<div className="text-center text-zinc-600 py-8 text-xs font-bold">Sepete ürün ekleyin. Eklenen ürünlerin birim fiyatını ve adedini doğrudan buradan değiştirebilirsiniz.</div>}
@@ -2314,7 +2382,7 @@ export default function App(){
                         <button
                           type="button"
                           onClick={()=>{
-                            const activeCustName=customers.find((c:any)=>c.id===(orderMode?orderCustomer:cartCustomer))?.name||'all';
+                            const activeCustName=customers.find((c:any)=>c.id===(orderMode?orderCustomer:cartCustomer))?.name||(orderMode&&orderCustomCustomerName.trim()?orderCustomCustomerName.trim():'all');
                             setQuickPriceCustomerFilter(activeCustName);
                             setQuickPriceModalItem({target:'pos',item});
                           }}
@@ -3078,7 +3146,15 @@ export default function App(){
                         <button onClick={()=>triggerOrderPrint(order)} className="bg-white hover:bg-zinc-200 text-zinc-950 px-3 py-1.5 rounded-lg text-xs font-black flex items-center gap-1.5 shadow"><Printer size={12}/> Fiş Çıkar</button>
                         {order.status==='bekliyor'&&<>
                           <button onClick={()=>handleOrderStatus(order.id,'hazirlaniyor')} className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1"><Clock size={11}/> Hazırla</button>
-                          <button onClick={()=>{setEditingOrder(order);setEditOrderCart([...(order.items||[])]);setEditOrderDiscount(String(order.discountPct||0));}} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg text-xs font-bold border border-zinc-700 flex items-center gap-1"><Pencil size={11}/> Düzenle</button>
+                          <button onClick={()=>{
+                            setEditingOrder(order);
+                            setEditOrderCart([...(order.items||[])]);
+                            setEditOrderDiscount(String(order.discountPct||0));
+                            setEditOrderCustomerId(order.customerId||'');
+                            setEditOrderCustomerName(order.customerId?'':(order.customerName&&order.customerName!=='Müşteri belirtilmemiş'?order.customerName:''));
+                            setEditOrderNote(order.note||'');
+                            setEditOrderDeliveryDate(order.deliveryDate||'');
+                          }} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg text-xs font-bold border border-zinc-700 flex items-center gap-1"><Pencil size={11}/> Düzenle</button>
                         </>}
                         {order.status==='hazirlaniyor'&&<button onClick={()=>handleOrderStatus(order.id,'gönderildi')} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1"><SendHorizonal size={11}/> Gönderildi</button>}
                         {(order.status==='bekliyor'||order.status==='hazirlaniyor')&&<button onClick={()=>handleOrderStatus(order.id,'iptal')} className="bg-zinc-800 hover:bg-red-600 text-zinc-400 hover:text-white px-3 py-1.5 rounded-lg text-xs font-bold border border-zinc-700 flex items-center gap-1"><Ban size={11}/> İptal</button>}
@@ -4691,6 +4767,54 @@ export default function App(){
           <div className="bg-zinc-900 border border-zinc-700 rounded-[28px] w-full max-w-lg shadow-2xl overflow-hidden animate-in zoom-in duration-300">
             <div className="p-6 border-b border-zinc-800 flex justify-between items-center"><h3 className="text-lg font-black text-white flex items-center gap-2"><Pencil size={15} className="text-orange-400"/> Sipariş Düzenle</h3><button onClick={()=>setEditingOrder(null)} className="text-zinc-500 hover:text-white bg-zinc-800 p-2 rounded-xl"><X size={18}/></button></div>
             <form onSubmit={handleUpdateOrder} className="p-6 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 bg-zinc-950 p-3 rounded-2xl border border-zinc-800">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase">Kayıtlı Cari Seç</label>
+                  <select
+                    value={editOrderCustomerId}
+                    onChange={e=>{
+                      setEditOrderCustomerId(e.target.value);
+                      if(e.target.value)setEditOrderCustomerName('');
+                    }}
+                    className="w-full bg-zinc-900 border border-zinc-700 p-2 rounded-xl text-white outline-none focus:border-orange-400 text-xs font-bold"
+                  >
+                    <option value="">— Kayıtlı Cari Seç —</option>
+                    {customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase">Veya Manuel Müşteri Adı</label>
+                  <input
+                    type="text"
+                    value={editOrderCustomerName}
+                    onChange={e=>{
+                      setEditOrderCustomerName(e.target.value);
+                      if(e.target.value.trim())setEditOrderCustomerId('');
+                    }}
+                    placeholder="Müşteri adı yazın..."
+                    className="w-full bg-zinc-900 border border-zinc-700 p-2 rounded-xl text-white outline-none focus:border-orange-400 text-xs font-bold"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase">Sipariş Notu</label>
+                  <input
+                    type="text"
+                    value={editOrderNote}
+                    onChange={e=>setEditOrderNote(e.target.value)}
+                    placeholder="Not..."
+                    className="w-full bg-zinc-900 border border-zinc-700 p-2 rounded-xl text-white outline-none focus:border-orange-400 text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase">Teslim Tarihi</label>
+                  <input
+                    type="date"
+                    value={editOrderDeliveryDate}
+                    onChange={e=>setEditOrderDeliveryDate(e.target.value)}
+                    className="w-full bg-zinc-900 border border-zinc-700 p-2 rounded-xl text-white outline-none focus:border-orange-400 text-xs"
+                  />
+                </div>
+              </div>
               <div className="space-y-3 max-h-60 overflow-y-auto">
                 {editOrderCart.map((item:any,idx:number)=>(
                   <div key={idx} className="flex items-center gap-2 bg-zinc-950 p-3 rounded-xl border border-zinc-800">
